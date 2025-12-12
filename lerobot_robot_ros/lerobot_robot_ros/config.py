@@ -20,6 +20,7 @@ from lerobot.robots import RobotConfig
 
 class ActionType(Enum):
     CARTESIAN_VELOCITY = "cartesian_velocity"
+    CARTESIAN_VELOCITY_TWIST_MSG = "cartesian_velocity_twist_msg"
     JOINT_POSITION = "joint_position"
     JOINT_TRAJECTORY = "joint_trajectory"
 
