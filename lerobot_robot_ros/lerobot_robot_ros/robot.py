@@ -189,3 +189,9 @@ class SO101ROS(ROS2Robot):
 
 class AnninAR4(ROS2Robot):
     pass
+
+class UR10eSim(ROS2Robot):
+    pass
+
+class UR10eReal(ROS2Robot):
+    pass
