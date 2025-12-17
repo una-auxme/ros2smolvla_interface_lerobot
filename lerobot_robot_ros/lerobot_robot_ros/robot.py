@@ -37,6 +37,8 @@ class ROS2Robot(Robot):
         self.config = config
         self.ros2_interface = ROS2Interface(config.ros2_interface, config.action_type)
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.last_gripper_action = None
+        self.gripper_center = (self.config.ros2_interface.gripper_open_position - self.config.ros2_interface.gripper_close_position) / 2
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -54,7 +56,7 @@ class ROS2Robot(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        if self.config.action_type == ActionType.CARTESIAN_VELOCITY:
+        if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
             return {
                 "linear_x.vel": float,
                 "linear_y.vel": float,
@@ -135,7 +137,7 @@ class ROS2Robot(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        if self.config.action_type == ActionType.CARTESIAN_VELOCITY:
+        if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
             if self.config.max_relative_target is not None:
                 # We don't have the current velocity of the arm, so set it to 0.0
                 # Effectively the goal velocity gets clipped by max_relative_target
@@ -168,8 +170,18 @@ class ROS2Robot(Robot):
             joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
             self.ros2_interface.send_joint_position_command(joint_positions)
 
-        gripper_pos = action["gripper.pos"]
-        self.ros2_interface.send_gripper_command(gripper_pos)
+        if self.config.ros2_interface.gripper_joint_name:
+
+            if action["gripper.pos"] > self.gripper_center:
+                gripper_pos = self.config.ros2_interface.gripper_close_position
+            else:
+                gripper_pos = self.config.ros2_interface.gripper_open_position
+
+            if gripper_pos == self.last_gripper_action:
+                pass
+            else:
+               self.last_gripper_action = gripper_pos
+               self.ros2_interface.send_gripper_command(gripper_pos)
         return action
 
     def disconnect(self):

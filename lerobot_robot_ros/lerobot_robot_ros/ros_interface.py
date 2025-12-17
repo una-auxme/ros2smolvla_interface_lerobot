@@ -198,21 +198,21 @@ class ROS2Interface:
             return
         
         elif self.action_type == ActionType.CARTESIAN_VELOCITY_TWIST_MSG:
-            self._twist_msg = TwistStamped()
-            self._twist_msg.header.frame_id = self.config.base_link
-            self._twist_msg.header.stamp = self.robot_node.get_clock().now().to_msg()
-            self._twist_msg.twist.linear.x = float(linear[0])
-            self._twist_msg.twist.linear.y = float(linear[1])
-            self._twist_msg.twist.linear.z = float(linear[2])
-            self._twist_msg.twist.angular.x = float(angular[0])
-            self._twist_msg.twist.angular.y = float(angular[1])
-            self._twist_msg.twist.angular.z = float(angular[2])
-            self.twist_pub.publish(self._twist_msg)
+            twist_msg = TwistStamped()
+            twist_msg.header.frame_id = self.config.base_link
+            twist_msg.header.stamp = self.robot_node.get_clock().now().to_msg()
+            twist_msg.twist.linear.x = float(linear[0])
+            twist_msg.twist.linear.y = float(linear[1])
+            twist_msg.twist.linear.z = float(linear[2])
+            twist_msg.twist.angular.x = float(angular[0])
+            twist_msg.twist.angular.y = float(angular[1])
+            twist_msg.twist.angular.z = float(angular[2])
+            self.twist_pub.publish(twist_msg)
             return
 
 
 
-    def send_gripper_command(self, position: float, unnormalize: bool = True) -> bool:
+    def send_gripper_command(self, position: float, unnormalize: bool = False) -> bool:
         """
         Send a command to the gripper to move to a specific position.
         Args:
@@ -260,10 +260,6 @@ class ROS2Interface:
             result = resp.result  # type: ignore  # ROS2 types available at runtime
             if result.reached_goal:
                 return True
-            logger.error(
-                f"Gripper did not reach goal. stalled: {result.stalled}, "
-                f"effort: {result.effort}, position: {result.position}"
-            )
             return False
 
     @property
