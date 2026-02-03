@@ -16,7 +16,7 @@
 homepage = "https://github.com/ycheng517/lerobot-ros"
 
 [project]
-name = "lerobot-teleoperator-devices"
+name = "lerobot_teleoperator_devices"
 version = "0.1.0"
 description = "🤗 Teleoperators for lerobot"
 authors = [

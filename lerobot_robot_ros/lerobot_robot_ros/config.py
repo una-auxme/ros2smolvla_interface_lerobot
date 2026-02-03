@@ -18,7 +18,7 @@ from lerobot.cameras import CameraConfig, Cv2Rotation
 from lerobot.cameras.configs import ColorMode
 from lerobot.robots import RobotConfig
 
-from lerobot_roscam.roscam_config import ROS2CameraConfig
+from lerobot_camera_roscam.roscam_config import ROS2CameraConfig
 
 
 class ActionType(Enum):
