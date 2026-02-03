@@ -25,10 +25,11 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import Executor, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
+from rclpy.subscription import Subscription
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import TwistStamped, PoseStamped
 
 from .config import ActionType, GripperActionType, GripperType, ROS2InterfaceConfig
 from .moveit_servo import MoveIt2Servo
@@ -60,6 +61,9 @@ class ROS2Interface:
         self.robot_node: Node | None = None
         self.pos_cmd_pub: Publisher | None = None
         self.traj_cmd_pub: Publisher | None = None
+        self.twist_pub: Publisher | None = None
+        self.joint_state_sub: Subscription | None = None
+        self.cart_pose_sub: Subscription | None = None 
         self.gripper_action_client: ActionClient | None = None
         self.gripper_traj_pub: Publisher | None = None
         self.executor: Executor | None = None
@@ -67,6 +71,7 @@ class ROS2Interface:
         self.executor_thread: threading.Thread | None = None
         self.is_connected = False
         self._last_joint_state: dict[str, dict[str, float]] | None = None
+        self.current_pose_data = None
 
     def connect(self) -> None:
         if not rclpy.ok():
@@ -96,6 +101,12 @@ class ROS2Interface:
                  reliability=qos.QoSReliabilityPolicy.RELIABLE,
                  history=qos.QoSHistoryPolicy.KEEP_ALL
              ))
+            self.cart_pose_sub = self.robot_node.create_subscription(
+                PoseStamped,
+                "/cartesian_motion_controller/current_pose",
+                self._cart_pose_callback,
+                10
+            )
             self._twist_msg = TwistStamped()
 
         if self.config.gripper_action_type == GripperActionType.TRAJECTORY:
@@ -290,6 +301,28 @@ class ROS2Interface:
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities
+
+    def _cart_pose_callback(self, msg: "PoseStamped") -> None:
+        """
+        Callback function for the PoseStamped subscriber.
+        Extracts Cartesian position and Quaternion orientation.
+        """
+        # 1. Extract Position (x, y, z)
+        position = msg.pose.position
+        
+        # 2. Extract Orientation (x, y, z, w)
+        orientation = msg.pose.orientation
+
+        # 3. Store in a data structure (e.g., a dictionary instance variable)
+        self.current_pose_data = {
+            "x": position.x,
+            "y": position.y,
+            "z": position.z,
+            "quat_x": orientation.x,
+            "quat_y": orientation.y,
+            "quat_z": orientation.z,
+            "quat_w": orientation.w
+        }
 
     def disconnect(self):
         if self.joint_state_sub:

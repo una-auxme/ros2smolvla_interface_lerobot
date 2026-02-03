@@ -52,6 +52,21 @@ class ROS2Robot(Robot):
         if self.config.ros2_interface.gripper_joint_name:
             all_joint_names.append(self.config.ros2_interface.gripper_joint_name)
         motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
+
+        if self.config.action_type is ActionType.CARTESIAN_VELOCITY_TWIST_MSG:
+            pose_ft = {
+                "pose.x": float,
+                "pose.y": float,
+                "pose.z": float,
+                "pose.quat_x": float,
+                "pose.quat_y": float,
+                "pose.quat_z": float,
+                "pose.quat_w": float,
+            }
+
+            # 3. Merge all feature sets
+            return {**motor_state_ft, **pose_ft, **self._cameras_ft}
+        
         return {**motor_state_ft, **self._cameras_ft}
 
     @cached_property
@@ -104,6 +119,10 @@ class ROS2Robot(Robot):
         if joint_state is None:
             raise ValueError("Joint state is not available yet.")
         obs_dict.update({f"{joint}.pos": pos for joint, pos in joint_state["position"].items()})
+
+        if self.config.action_type is ActionType.CARTESIAN_VELOCITY_TWIST_MSG:
+            cart_pose = self.ros2_interface.current_pose_data
+            obs_dict.update({f"pose.{name}" : value for name, value in cart_pose.items()})
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
