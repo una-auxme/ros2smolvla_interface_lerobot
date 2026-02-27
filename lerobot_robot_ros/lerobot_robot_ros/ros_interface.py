@@ -265,13 +265,10 @@ class ROS2Interface:
             elif self.config.gripper_type == GripperType.PARALLEL_GRIPPER:
                 self._goal_msg.command.position = [float(gripper_goal)]
 
-            if not (resp := self.gripper_action_client.send_goal(self._goal_msg)):
+            if not (resp := self.gripper_action_client.send_goal_async(self._goal_msg)):
                 logger.error("Failed to send gripper command")
                 return False
-            result = resp.result  # type: ignore  # ROS2 types available at runtime
-            if result.reached_goal:
-                return True
-            return False
+            return True
 
     @property
     def joint_state(self) -> dict[str, dict[str, float]] | None:
