@@ -287,7 +287,7 @@ class ROS2Interface:
             positions[joint_name] = msg.position[idx]
             velocities[joint_name] = msg.velocity[idx]
 
-        if self.config.gripper_joint_name:
+        if self.config.include_gripper_state:
             idx = name_to_index.get(self.config.gripper_joint_name)
             if idx is None:
                 raise ValueError(
