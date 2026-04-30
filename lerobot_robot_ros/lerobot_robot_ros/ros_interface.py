@@ -71,7 +71,6 @@ class ROS2Interface:
         self.executor_thread: threading.Thread | None = None
         self.is_connected = False
         self._last_joint_state: dict[str, dict[str, float]] | None = None
-        self.current_pose_data = None
 
     def connect(self) -> None:
         if not rclpy.ok():
@@ -280,21 +279,22 @@ class ROS2Interface:
         positions = {}
         velocities = {}
         name_to_index = {name: i for i, name in enumerate(msg.name)}
+
         for joint_name in self.config.arm_joint_names:
             idx = name_to_index.get(joint_name)
             if idx is None:
                 raise ValueError(f"Joint '{joint_name}' not found in joint state.")
-            positions[joint_name] = msg.position[idx]
-            velocities[joint_name] = msg.velocity[idx]
+            positions[(joint_name + ".pos")] = msg.position[idx]
+            velocities[(joint_name + ".pos")] = msg.velocity[idx]
 
-        if self.config.gripper_joint_name:
-            idx = name_to_index.get(self.config.gripper_joint_name)
-            if idx is None:
-                raise ValueError(
-                    f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
-                )
-            positions[self.config.gripper_joint_name] = msg.position[idx]
-            velocities[self.config.gripper_joint_name] = msg.velocity[idx]
+
+        idx = name_to_index.get(self.config.gripper_joint_name)
+        if idx is None:
+            raise ValueError(
+                f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
+            )
+        positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
+        velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities
@@ -304,6 +304,7 @@ class ROS2Interface:
         Callback function for the PoseStamped subscriber.
         Extracts Cartesian position and Quaternion orientation.
         """
+        self._last_joint_state = self._last_joint_state or {}
         # 1. Extract Position (x, y, z)
         position = msg.pose.position
         
@@ -311,14 +312,14 @@ class ROS2Interface:
         orientation = msg.pose.orientation
 
         # 3. Store in a data structure (e.g., a dictionary instance variable)
-        self.current_pose_data = {
-            "x": position.x,
-            "y": position.y,
-            "z": position.z,
-            "quat_x": orientation.x,
-            "quat_y": orientation.y,
-            "quat_z": orientation.z,
-            "quat_w": orientation.w
+        self._last_joint_state["cart_pose"] = {
+            "pose.x": position.x,
+            "pose.y": position.y,
+            "pose.z": position.z,
+            "pose.quat_x": orientation.x,
+            "pose.quat_y": orientation.y,
+            "pose.quat_z": orientation.z,
+            "pose.quat_w": orientation.w
         }
 
     def disconnect(self):
