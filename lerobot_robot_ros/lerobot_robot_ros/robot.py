@@ -48,28 +48,9 @@ class ROS2Robot(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = []
-        if self.config.ros2_interface.include_joint_states:
-            all_joint_names = self.config.ros2_interface.arm_joint_names.copy()
-        if self.config.ros2_interface.include_gripper_state:
-            all_joint_names.append(self.config.ros2_interface.gripper_joint_name)
-        motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
-
-        if self.config.action_type is ActionType.CARTESIAN_VELOCITY_TWIST_MSG:
-            pose_ft = {
-                "pose.x": float,
-                "pose.y": float,
-                "pose.z": float,
-                "pose.quat_x": float,
-                "pose.quat_y": float,
-                "pose.quat_z": float,
-                "pose.quat_w": float,
-            }
-
-            # 3. Merge all feature sets
-            return {**motor_state_ft, **pose_ft, **self._cameras_ft}
         
-        return {**motor_state_ft, **self._cameras_ft}
+        state_ft = {obs: float for obs in self.config.observation_names}        
+        return {**state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -118,13 +99,17 @@ class ROS2Robot(Robot):
 
         obs_dict: dict[str, Any] = {}
         joint_state = self.ros2_interface.joint_state
-        if joint_state is None:
-            raise ValueError("Joint state is not available yet.")
-        obs_dict.update({f"{joint}.pos": pos for joint, pos in joint_state["position"].items()})
+        obs_dict.update({
+            joint : pos 
+            for joint, pos in joint_state["position"].items() 
+            if joint in self.config.observation_names
+        })
 
-        if self.config.action_type is ActionType.CARTESIAN_VELOCITY_TWIST_MSG:
-            cart_pose = self.ros2_interface.current_pose_data
-            obs_dict.update({f"pose.{name}" : value for name, value in cart_pose.items()})
+        obs_dict.update({
+            joint : pos 
+            for joint, pos in joint_state["cart_pose"].items() 
+            if joint in self.config.observation_names
+        })
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():

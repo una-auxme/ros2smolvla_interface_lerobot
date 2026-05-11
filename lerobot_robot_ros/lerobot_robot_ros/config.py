@@ -53,9 +53,7 @@ class ROS2InterfaceConfig:
         ]
     )
 
-    include_joint_states: bool = True
     gripper_joint_name: str = "gripper_joint"
-    include_gripper_state: bool = True
 
     # Base link name for computing end effector pose / velocity
     # Only applicable for cartesian control
@@ -88,6 +86,16 @@ class ROS2Config(RobotConfig):
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6",
+        ]
+    )
 
     # ROS2 interface configuration
     ros2_interface: ROS2InterfaceConfig = field(default_factory=ROS2InterfaceConfig)
@@ -175,6 +183,25 @@ class UR10eSimConfig(ROS2Config):
         }
     )
 
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "shoulder_pan_joint.pos",
+        "shoulder_lift_joint.pos",
+        "elbow_joint.pos",
+        "wrist_1_joint.pos",
+        "wrist_2_joint.pos",
+        "wrist_3_joint.pos",
+        "robotiq_hande_left_finger_joint.pos",
+        "pose.x",
+        "pose.y",
+        "pose.z",
+        "pose.quat_x",
+        "pose.quat_y",
+        "pose.quat_z",
+        "pose.quat_w",
+        ]
+    )
+
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
@@ -188,7 +215,6 @@ class UR10eSimConfig(ROS2Config):
             ],
             
             gripper_joint_name="robotiq_hande_left_finger_joint",
-            include_gripper_state = True,
             gripper_action_type=GripperActionType.ACTION,
             gripper_type=GripperType.PARALLEL_GRIPPER,
             gripper_open_position=0.0249,
@@ -240,6 +266,25 @@ class UR10eRealConfig(ROS2Config):
                 height=720,
             ),
         })
+    
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "shoulder_pan_joint.pos",
+        "shoulder_lift_joint.pos",
+        "elbow_joint.pos",
+        "wrist_1_joint.pos",
+        "wrist_2_joint.pos",
+        "wrist_3_joint.pos",
+        "robotiq_hande_left_finger_joint.pos",
+        "pose.x",
+        "pose.y",
+        "pose.z",
+        "pose.quat_x",
+        "pose.quat_y",
+        "pose.quat_z",
+        "pose.quat_w",
+        ]
+    )
 
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
@@ -254,7 +299,6 @@ class UR10eRealConfig(ROS2Config):
             ],
             
             gripper_joint_name="robotiq_hande_left_finger_joint",
-            include_gripper_state = True,
             gripper_action_type=GripperActionType.ACTION,
             gripper_type=GripperType.PARALLEL_GRIPPER,
             gripper_open_position=0.0249,
@@ -307,6 +351,24 @@ class UR10eRealConfig(ROS2Config):
             ),
         })
 
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "shoulder_pan_joint.pos",
+        "shoulder_lift_joint.pos",
+        "elbow_joint.pos",
+        "wrist_1_joint.pos",
+        "wrist_2_joint.pos",
+        "wrist_3_joint.pos",
+        "pose.x",
+        "pose.y",
+        "pose.z",
+        "pose.quat_x",
+        "pose.quat_y",
+        "pose.quat_z",
+        "pose.quat_w",
+        ]
+    )
+
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
@@ -320,7 +382,6 @@ class UR10eRealConfig(ROS2Config):
             ],
             
             gripper_joint_name="robotiq_hande_left_finger_joint",
-            include_gripper_state = False,
             gripper_action_type=GripperActionType.ACTION,
             gripper_type=GripperType.PARALLEL_GRIPPER,
             gripper_open_position=0.0249,
@@ -373,6 +434,18 @@ class UR10eRealConfig(ROS2Config):
             ),
         })
 
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "pose.x",
+        "pose.y",
+        "pose.z",
+        "pose.quat_x",
+        "pose.quat_y",
+        "pose.quat_z",
+        "pose.quat_w",
+        ]
+    )
+
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
@@ -385,9 +458,85 @@ class UR10eRealConfig(ROS2Config):
                 "wrist_3_joint",
             ],
             
+
             gripper_joint_name="robotiq_hande_left_finger_joint",
-            include_joint_states= False,
-            include_gripper_state = False,
+            gripper_action_type=GripperActionType.ACTION,
+            gripper_type=GripperType.PARALLEL_GRIPPER,
+            gripper_open_position=0.0249,
+            gripper_close_position=0.0001,
+            max_linear_velocity=0.05,  # m/s
+            max_angular_velocity=0.25,  # rad/s
+            min_joint_positions=[-4.71, -3.14, 0.0, -7.5, -3.14, -3.14],
+            max_joint_positions=[1.57, 0.0, 5.0, 2.5, 0.0, 3.14],
+        )
+    )
+
+@RobotConfig.register_subclass("ur_10e_real_no_quats_grip_joints")
+@dataclass
+class UR10eRealConfig(ROS2Config):
+    action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
+    max_relative_target = 0.2
+    
+    
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+             "camera1": ROS2CameraConfig(
+                 topic='/top_camera/rgb/image_raw/compressed',
+                 node_name="top_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=720,
+                 height=1280,
+                 rotation=Cv2Rotation.ROTATE_270
+             ),
+
+             "camera2": ROS2CameraConfig(
+                 topic='/side_camera/rgb/image_raw/compressed',
+                 node_name="side_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=1280,
+                 height=720,
+            ),
+
+            "camera3": ROS2CameraConfig(
+                topic='/wrist_camera/image_raw/compressed',
+                node_name="wrist_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=1280,
+                height=720,
+            ),
+        })
+
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "wrist_1_joint.pos",
+        "wrist_2_joint.pos",
+        "wrist_3_joint.pos",
+        "pose.x",
+        "pose.y",
+        "pose.z",
+        ]
+    )
+
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            
+
+            gripper_joint_name="robotiq_hande_left_finger_joint",
             gripper_action_type=GripperActionType.ACTION,
             gripper_type=GripperType.PARALLEL_GRIPPER,
             gripper_open_position=0.0249,
