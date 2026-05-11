@@ -280,12 +280,15 @@ class ROS2Interface:
         positions = {}
         velocities = {}
         name_to_index = {name: i for i, name in enumerate(msg.name)}
-        for joint_name in self.config.arm_joint_names:
-            idx = name_to_index.get(joint_name)
-            if idx is None:
-                raise ValueError(f"Joint '{joint_name}' not found in joint state.")
-            positions[joint_name] = msg.position[idx]
-            velocities[joint_name] = msg.velocity[idx]
+
+        if self.config.include_joint_states:
+            for joint_name in self.config.arm_joint_names:
+                idx = name_to_index.get(joint_name)
+                if idx is None:
+                    raise ValueError(f"Joint '{joint_name}' not found in joint state.")
+                positions[joint_name] = msg.position[idx]
+                velocities[joint_name] = msg.velocity[idx]
+
 
         if self.config.include_gripper_state:
             idx = name_to_index.get(self.config.gripper_joint_name)

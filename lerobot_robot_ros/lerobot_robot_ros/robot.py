@@ -48,7 +48,9 @@ class ROS2Robot(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = self.config.ros2_interface.arm_joint_names.copy()
+        all_joint_names = []
+        if self.config.ros2_interface.include_joint_states:
+            all_joint_names = self.config.ros2_interface.arm_joint_names.copy()
         if self.config.ros2_interface.include_gripper_state:
             all_joint_names.append(self.config.ros2_interface.gripper_joint_name)
         motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
