@@ -36,7 +36,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "lerobot>=0.4.0,<0.5.0",
+    "lerobot>=0.4.0",
     "lerobot_camera_roscam"
 ]
 
