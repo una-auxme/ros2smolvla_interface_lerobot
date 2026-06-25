@@ -293,8 +293,8 @@ class ROS2Interface:
             raise ValueError(
                 f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
             )
-        positions[self.config.gripper_joint_name] = msg.position[idx]
-        velocities[self.config.gripper_joint_name] = msg.velocity[idx]
+        positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
+        velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities
