@@ -173,4 +173,4 @@ class MyRobotConfig(ROS2Config):
 ```
 ## License
 
-This repository is licensed under Apache-2.0 as listed in [LICENSE](lerobot-ros\LICENSE). Please, also refer to the attributions in [NOTICE](NOTICE.md).
+This repository is licensed under Apache-2.0 as listed in [LICENSE](LICENSE). Please also refer to the attributions in [NOTICE](NOTICE.md).
