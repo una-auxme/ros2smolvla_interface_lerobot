@@ -1,115 +1,4 @@
-LE-ROBOT ROS – COMPOSITE LICENSE NOTICE
-========================================
-
-Copyright and licensing information for this repository.
-
-This repository combines material originating from the original
-`ycheng517/lerobot-ros` project, material originating from the
-Hugging Face LeRobot project, and original contributions made by
-the Chair of Mechatronics, University of Augsburg (AuxMe) / its contributors.
-
-IMPORTANT
----------
-This file is an interim licensing notice pending confirmation from
-the original `ycheng517/lerobot-ros` copyright holder.
-
-The original `ycheng517/lerobot-ros` repository currently does not
-contain a root LICENSE file. However, its Python source files and
-package metadata contain explicit Apache License 2.0 notices and
-license declarations. The corresponding original material is
-therefore treated here as Apache License, Version 2.0 (Apache-2.0)
-material, subject to confirmation by the original copyright holder.
-
-1. ORIGINAL / UPSTREAM MATERIAL — APACHE LICENSE 2.0
------------------------------------------------------
-
-The original material inherited from `ycheng517/lerobot-ros`, as well
-as material originating from Hugging Face LeRobot, is licensed under
-the Apache-2.0, where the applicable source-file
-notice or project metadata so indicates.
-
-This includes, in particular, the original portions of:
-
-  lerobot_robot_ros/lerobot_robot_ros/config.py
-  lerobot_robot_ros/lerobot_robot_ros/robot.py
-  lerobot_robot_ros/lerobot_robot_ros/ros_interface.py
-  lerobot_robot_ros/lerobot_robot_ros/__init__.py
-  lerobot_robot_ros/pyproject.toml
-  lerobot_teleoperator_devices/pyproject.toml
-
-The original source files contain Apache-2.0 notices attributed to
-The HuggingFace Inc. team. The package metadata in the upstream
-repository also declares Apache-2.0. The LeRobot project itself is
-published under Apache-2.0.
-
-Original copyright notices must be preserved.
-
-2. AuxMe ORIGINAL CONTRIBUTIONS — MIT LICENSE
---------------------------------------------
-
-Copyright (c) 2025-2026 AuxMe / its contributors
-
-To the extent permitted by applicable copyright law, the original
-copyrightable contributions added by AuxMe / its contributors to this
-repository are licensed under Apache-2.0.
-
-This applies to the original contributions made in the following
-changes relative to `ycheng517/lerobot-ros`:
-
-  * ParallelGripperCommand support
-  * TwistStamped Cartesian velocity support
-  * UR10e simulation and real-robot configurations
-  * configurable gripper types
-  * configurable observation spaces
-  * configurable inclusion/exclusion of joint and gripper state
-  * Cartesian pose / quaternion observations
-  * asynchronous gripper commands
-  * gripper command deduplication
-  * camera configuration and cropping additions
-  * related fixes and configuration additions
-  * the newly created:
-      lerobot_robot_ros/package.xml
-
-For files containing both upstream material and AuxMe contributions,
-this Apache-2.0 grant applies only to the original AuxMe contributions.
-It does not relicense, replace, or limit the Apache-2.0 license applying
-to upstream material.
-
-Changes to package metadata in the two pyproject.toml files are
-covered by this notice to the extent that they are copyrightable;
-purely factual metadata is not claimed as a separate copyright work.
-
-3. HUGGING FACE LEROBOT
------------------------
-
-This repository interfaces with and depends on Hugging Face LeRobot.
-
-LeRobot is licensed under the Apache-2.0.
-
-See:
-  https://github.com/huggingface/lerobot
-
-Copyright notices and license notices contained in LeRobot-derived
-material must be preserved.
-
-4. APACHE LICENSE, VERSION 2.0
-------------------------------
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at:
-
-  https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-implied. See the License for the specific language governing
-permissions and limitations under the License.
-
-The full Apache License, Version 2.0 text follows below.
-
-								Apache License
+								      Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
 
@@ -285,3 +174,30 @@ The full Apache License, Version 2.0 text follows below.
       of your accepting any such warranty or additional liability.
 
    END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2024-2026 The HuggingFace Inc. team
+   Copyright 2025-2026 ycheng517
+   Copyright 2025-2026 AuxMe / its contributors
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
