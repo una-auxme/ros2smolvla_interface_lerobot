@@ -1,5 +1,5 @@
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-# Copyright 2025-2026 AuxMe / its contributors.
+# Copyright 2025-2026 University of Augsburg, Chair of Mechatronics by Noah Böckmann
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

@@ -1,6 +1,12 @@
-# LeRobot ROS
+# ros2smolvla_interface_lerobot
+
+This is a fork of [lerobot-ros](https://github.com/ycheng517/lerobot-ros) made by Yifei Cheng and contains specific tweaks and additions to make it applicable to our [ROS2SmolVLA](https://una-auxme.github.io/en/projects/ros2smolvla/) project.
+
 
 This repository provides a generic ROS 2 interface for the [LeRobot](https://github.com/huggingface/lerobot) framework. It acts as a lightweight wrapper to connect any [ros2_control](https://control.ros.org/rolling/index.html) or [MoveIt](https://moveit.ai/) compatible robot arm with the LeRobot ecosystem.
+
+The fork adds the possibility to simply send ROS2 TwistStamped messages to a rostopic. This makes it easy to ingest into other control nodes. Also, it implements an option to control a parallel gripper and adds a list of observation names to easily configure the observation states to LeRobot.
+
 
 A gamepad teleoperator for 6-DoF end-effector control and a keyboard teleoperator for joint position control is also provided.
 
@@ -9,11 +15,13 @@ A gamepad teleoperator for 6-DoF end-effector control and a keyboard teleoperato
 - Joint position with ros2_control
   - Using [joint_trajectory_controller](https://control.ros.org/rolling/doc/ros2_controllers/joint_trajectory_controller/doc/userdoc.html)
   - Using [position_controllers](https://control.ros.org/rolling/doc/ros2_controllers/position_controllers/doc/userdoc.html)
-- End-effector velocity with MoveIt 2
+- End-effector velocity
   - Using [Moveit Servo](https://moveit.picknik.ai/main/doc/examples/realtime_servo/realtime_servo_tutorial.html)
+  - Using a TwistStamped ROS message topic
 - Gripper control with ros2_control
   - Using [joint_trajectory_controller](https://control.ros.org/rolling/doc/ros2_controllers/joint_trajectory_controller/doc/userdoc.html)
   - Using [Gripper Action Controller](https://control.ros.org/jazzy/doc/ros2_controllers/gripper_controllers/doc/userdoc.html)
+  - Using [Parallel Gripper Action Controller](https://control.ros.org/jazzy/doc/ros2_controllers/parallel_gripper_controller/doc/userdoc.html)
 
 ## Video Demo
 
@@ -27,52 +35,12 @@ Before getting started, ensure you have the following installed:
 
 - [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html) - This repo is only tested on Jazzy.
 - [ros2_control](https://control.ros.org/rolling/index.html)
-- If end-effector control is desired, then [MoveIt2](https://moveit.ai/install-moveit2/binary) needs to be installed
+- If end-effector control is desired, then [MoveIt2](https://moveit.ai/install-moveit2/binary) needs to be installed or you have to have additional control nodes for processing the ROS topic output.
+- Our [ros2smolvla_interface_camera](https://github.com/una-auxme/ros2smolvla_interface_camera) package for interfacing with a camera via ROS image messages. You can do without, but have to remove our custom camera configurations in [config.py](lerobot_robot_ros/lerobot_robot_ros/config.py)
 
-## Quickstart with Simulated SO-101
+## Usage Example of the Fork
 
-Below steps will allow you to perform keyboard teleoperation of a simulated SO-101 arm using Lerobot.
-
----
-
-First, setup LeRobot and lerobot-ros in a virtual environment. Note that the Python version of the virtualenv must be compatible with your ROS version. For ROS 2 Jazzy, we use Python 3.12.
-
-```bash
-# Create and activate virtual env
-conda create -y -n lerobot-ros python=3.12
-conda activate lerobot-ros
-conda install -c conda-forge libstdcxx-ng -y # needed as rclpy requires GLIBCXX_3.4.30 symbols
-
-# Source ROS
-source /opt/ros/jazzy/setup.sh
-
-# Install lerobot-ros packages (this will install a compatible version of lerobot as well)
-git clone https://github.com/ycheng517/lerobot-ros
-cd lerobot-ros
-pip install -e lerobot_robot_ros lerobot_teleoperator_devices
-```
-
-Then, setup the Simulated SO-101 by following instructions in: https://github.com/Pavankv92/lerobot_ws
-
-Finally, to run all programs:
-
-```bash
-# In terminal 1, run the Gazebo simulation
-ros2 launch lerobot_description so101_gazebo.launch.py
-
-# In terminal 2, load the ros2 controllers and run MoveIt
-ros2 launch lerobot_controller so101_controller.launch.py && \
-  ros2 launch lerobot_moveit so101_moveit.launch.py
-
-# In terminal 3, run lerobot with the ROS version of so101 and keyboard teleop
-cd <YOUR lerobot-ros DIRECTORY>
-lerobot-teleoperate \
-  --robot.type=so101_ros \
-  --robot.id=my_awesome_follower_arm \
-  --teleop.type=keyboard_joint \
-  --teleop.id=my_awesome_leader_arm \
-  --display_data=true
-```
+Check out our project overview page to get an example up and running: [ros2smolvla_docker usage](https://github.com/una-auxme/ros2smolvla_docker#using-the-containers)
 
 Once you have teleoperation working, you can use all standard LeRobot features as usual.
 
@@ -102,7 +70,7 @@ This option uses [joint_trajectory_controller](https://control.ros.org/rolling/d
 
 This option is enabled by setting `action_type` to `ActionType.JOINT_TRAJECTORY` in robot config.
 
-**Option 3: End-Effector Control**
+**Option 3: End-Effector Control using MoveIt 2**
 
 This option uses [Moveit Servo](https://moveit.picknik.ai/main/doc/examples/realtime_servo/realtime_servo_tutorial.html) in MoveIt. It requires the robot to have:
 
@@ -112,25 +80,38 @@ This option uses [Moveit Servo](https://moveit.picknik.ai/main/doc/examples/real
 
 This option is enabled by setting `action_type` to `ActionType.CARTESIAN_VELOCITY` in robot config. See: [ar4_ros_driver](https://github.com/ycheng517/ar4_ros_driver) for an example of using `moveit_servo`.
 
+**Option 4: End-Effector Control using TwistStamped Messages**
+
+This option uses a ROS topic to publish TwistStamped messages under ```/servo_node/delta_twist_cmds```. It also subscribes to a PoseStamped topic called ```/cartesian_motion_controller/current_pose``` for position feedback. You need an additional ROS node to ingest and process the output further.
+
+
+This option is enabled by setting `action_type` to `ActionType.CARTESIAN_VELOCITY_TWIST_MSG` in robot config.
+
 ### Gripper Control Modes
 
-The repo supports two gripper control modes that can be configured via the `gripper_action_type` setting:
+The repo supports three gripper control modes that can be configured via the `gripper_action_type` setting:
 
-**Trajectory Control (`GripperActionType.TRAJECTORY`)**
+#### Trajectory Control (`GripperActionType.TRAJECTORY`)
 
 - Uses `JointTrajectoryController` from ros2_control
 - Publishes `JointTrajectory` messages to `/gripper_controller/joint_trajectory`
 
-**Action Control (`GripperActionType.ACTION`)**
+#### Action Control (`GripperActionType.ACTION`)
 
-- Uses `GripperActionController` from ros2_control
+Normal Gripper
+- Uses `GripperActionController` from ros2_control when `gripper_type` is set to `GripperType.GRIPPER`
 - Sends action goals to `/gripper_controller/gripper_cmd`
+- Provides feedback on whether the gripper reached its target position
+
+Parallel Gripper
+- Uses `ParallelGripperActionController` from ros2_control when `gripper_type` is set to `GripperType.PARALLEL_GRIPPER`
+- Sends action goals to `/gripper_action_controller/gripper_cmd`
 - Provides feedback on whether the gripper reached its target position
 
 ### Code Changes to Lerobot-ros
 
 Extend the `ROS2Robot` class in [robot.py](./lerobot_robot_ros/lerobot_robot_ros/robot.py).
-This class can be a simple pass-through. It's just is needed to satisfy lerobot device discovery requirements.
+This class can be a simple pass-through. It just is needed to satisfy lerobot device discovery requirements.
 
 ```python
 class MyRobot(ROS2Robot):
@@ -140,17 +121,28 @@ class MyRobot(ROS2Robot):
 Then, create a config class for your robot by sub-classing `ROS2Config` in [config.py](./lerobot_robot_ros/lerobot_robot_ros/config.py).
 The name of this class must be the same as your robot class, suffixed by `Config`.
 You may override joint names, gripper configurations, and other parameters as needed.
+
+The fork adds various configurations for our robot, depending on which robot state observations and camera settings are required. 
+
 An example config class for joint velocity control may look like this:
 
 ```python
-from dataclasses import dataclass, field
-from lerobot.common.robots.config import RobotConfig
-from lerobot.common.robots.config import ROS2Config, ROS2InterfaceConfig
-
 @RobotConfig.register_subclass("my_ros2_robot")
 @dataclass
 class MyRobotConfig(ROS2Config):
     action_type: ActionType = ActionType.JOINT_POSITION
+
+    observation_names: list[str] = field(
+      default_factory=lambda: [
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "joint_4",
+        "joint_5",
+        "joint_6",
+        "gripper_joint",
+      ]
+    )
 
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(

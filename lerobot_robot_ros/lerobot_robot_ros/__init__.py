@@ -1,4 +1,4 @@
-# Copyright 2025-2026 AuxMe / its contributors.
+# Copyright 2025-2026 University of Augsburg, Chair of Mechatronics by Noah Böckmann
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config import AnninAR4Config, ROS2Config, SO101ROSConfig, UR10eRealConfig, UR10eSimConfig
-from .robot import SO101ROS, AnninAR4, UR10eReal, UR10eSim, ROS2Robot
+from .config import ROS2Config, UR10eRealConfig, UR10eSimConfig
+from .robot import UR10eReal, UR10eSim, ROS2Robot

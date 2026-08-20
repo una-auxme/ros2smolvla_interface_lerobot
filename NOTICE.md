@@ -15,7 +15,7 @@ projects:
    https://github.com/ycheng517/lerobot-ros
 
 3. LeRobot ROS contributions
-   Copyright 2025-2026 AuxMe / its contributors.
+   Copyright 2025-2026 University of Augsburg, Chair of Mechatronics by Noah Böckmann
    Licensed under the Apache License, Version 2.0.
    https://github.com/una-auxme/lerobot-ros
 
