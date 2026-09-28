@@ -87,6 +87,12 @@ class ROS2InterfaceConfig:
     # actions use the same representation.
     use_6d_rotation: bool = False
 
+    # Only applicable for ActionType.CARTESIAN_POSITION with `use_6d_rotation`.
+    # Rotation about the z axis (degrees) that maps the robot's `base_link` frame into the frame the
+    # policy's data was generated in: observations are rotated by +yaw before they reach the policy,
+    # actions by -yaw before they are sent to the robot.
+    data_frame_yaw_deg: float = 0.0
+
     # Only applicable for ActionType.CARTESIAN_POSITION. Maximum distance (m) a commanded target
     # may be away from the current pose. Targets further away are pulled back onto this sphere.
     max_cartesian_step: float | None = None
@@ -262,3 +268,236 @@ class UR10eRealNoJointsCroppedConfig(UR10eRealConfig):
 
     cameras: dict[str, CameraConfig] = field(default_factory=lambda: _real_cameras(crop_top=True))
     observation_names: list[str] = field(default_factory=lambda: list(_POSE_QUAT_OBS))
+
+
+@RobotConfig.register_subclass("cartesian_robot_real")
+@dataclass
+class CartesianRobotRealConfig(ROS2Config):
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    
+    
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+             "top_center_camera": ROS2CameraConfig(
+                 topic='/top_camera/rgb/image_raw/compressed',
+                 node_name="top_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=720,
+                 height=720,
+                 rotation=Cv2Rotation.ROTATE_270,
+                 crop_box=[560, 1280, 0, 720] # This crops the output to 720 x 720
+             ),
+
+             "top_left_camera": ROS2CameraConfig(
+                 topic='/side_camera/rgb/image_raw/compressed',
+                 node_name="side_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=1280,
+                 height=720,
+            ),
+
+            "middle_left_camera": ROS2CameraConfig(
+                topic='/wrist_camera/image_raw/compressed',
+                node_name="wrist_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=1280,
+                height=720,
+            ),
+        })
+
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "current_robot_pose.0.pos",
+        "current_robot_pose.1.pos",
+        "current_robot_pose.2.pos",
+        "current_robot_pose.3.pos",
+        "current_robot_pose.4.pos",
+        "current_robot_pose.5.pos",
+        "current_robot_pose.6.pos",
+        "current_robot_pose.7.pos",
+        "current_robot_pose.8.pos",
+        ]
+    )
+
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            use_6d_rotation=True,
+
+            gripper_action_type=GripperActionType.NONE,
+        )
+    )
+
+@RobotConfig.register_subclass("cartesian_robot_sim")
+@dataclass
+class CartesianRobotSimConfig(ROS2Config):
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic='/top_cam/image',
+                node_name="top_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=360,
+                height=640,
+                rotation=Cv2Rotation.ROTATE_270
+            ),
+
+            "top_left_camera": ROS2CameraConfig(
+                topic='/side_cam/image',
+                node_name="side_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=640,
+                height=360,
+            ),
+
+            "middle_left_camera": ROS2CameraConfig(
+                topic='/wrist_cam/image',
+                node_name="wrist_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=640,
+                height=360,
+            ),
+        }
+    )
+
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "current_robot_pose.0.pos",
+        "current_robot_pose.1.pos",
+        "current_robot_pose.2.pos",
+        "current_robot_pose.3.pos",
+        "current_robot_pose.4.pos",
+        "current_robot_pose.5.pos",
+        "current_robot_pose.6.pos",
+        "current_robot_pose.7.pos",
+        "current_robot_pose.8.pos",
+        ]
+    )
+
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="world",
+            arm_joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            use_6d_rotation=True,
+            data_frame_yaw_deg=180.0,
+
+            gripper_action_type=GripperActionType.NONE,
+        )
+    )
+
+
+_POSE_OBS_NAMES = [f"current_robot_pose.{n}.pos" for n in range(9)]
+
+
+@RobotConfig.register_subclass("cartesian_robot_sim_no_middle")
+@dataclass
+class CartesianRobotSimNoMiddleConfig(ROS2Config):
+    """Sim, without the middle_left camera. Images are 640x360 (W x H), unrotated, like the SDG training data."""
+
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic="/top_cam/image",
+                node_name="top_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR,  # see workaround note in the other sim configs
+                fps=30,
+                width=640,
+                height=360,
+            ),
+            "top_left_camera": ROS2CameraConfig(
+                topic="/side_cam/image",
+                node_name="side_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR,  # see workaround note in the other sim configs
+                fps=30,
+                width=640,
+                height=360,
+            ),
+        }
+    )
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_OBS_NAMES))
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="world",
+            arm_joint_names=list(_UR_ARM_JOINTS),
+            use_6d_rotation=True,
+            data_frame_yaw_deg=180.0,
+            gripper_action_type=GripperActionType.NONE,
+            max_cartesian_step=0.05,
+        )
+    )
+
+
+@RobotConfig.register_subclass("cartesian_robot_real_no_middle")
+@dataclass
+class CartesianRobotRealNoMiddleConfig(ROS2Config):
+    """Real robot, without the middle_left camera. 1280x720 feeds are downscaled to 640x360, unrotated and uncropped."""
+
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic="/side_camera/rgb/image_raw/compressed",
+                node_name="side_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=640,
+                height=360,
+                resize=(640, 360),
+            ),
+            "top_left_camera": ROS2CameraConfig(
+                topic="/top_camera/rgb/image_raw/compressed",
+                node_name="top_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=640,
+                height=360,
+                resize=(640, 360),
+            ),
+        }
+    )
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_OBS_NAMES))
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="world",
+            arm_joint_names=list(_UR_ARM_JOINTS),
+            data_frame_yaw_deg=180.0,
+            use_6d_rotation=True,
+            gripper_action_type=GripperActionType.NONE,
+            max_cartesian_step=0.02,
+            workspace_min=(-0.683, -0.349, 0.255),
+            workspace_max=(-0.253, 0.350, 0.570),
+        )
+    )

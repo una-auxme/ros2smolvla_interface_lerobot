@@ -21,3 +21,4 @@ from .config import (
     UR10eSimConfig,
 )
 from .robot import ROS2Robot, UR10eReal, UR10eRealCrop, UR10eRealNoJoints, UR10eRealNoJointsCropped, UR10eSim
+from .robot import CartesianRobot, CartesianRobotReal, CartesianRobotRealNoMiddle, CartesianRobotSim, CartesianRobotSimNoMiddle
