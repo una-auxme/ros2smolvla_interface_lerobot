@@ -25,6 +25,7 @@ from lerobot_camera_roscam.roscam_config import ROS2CameraConfig
 class ActionType(Enum):
     CARTESIAN_VELOCITY = "cartesian_velocity"
     CARTESIAN_VELOCITY_TWIST_MSG = "cartesian_velocity_twist_msg"
+    CARTESIAN_POSITION = "cartesian_position"
     JOINT_POSITION = "joint_position"
     JOINT_TRAJECTORY = "joint_trajectory"
 
@@ -32,6 +33,7 @@ class ActionType(Enum):
 class GripperActionType(Enum):
     TRAJECTORY = "trajectory"  # Use JointTrajectoryController for gripper
     ACTION = "action"  # Use GripperActionClient
+    NONE = "none"
 
 class GripperType(Enum):
     PARALLEL_GRIPPER = "parallel_gripper"
@@ -73,6 +75,8 @@ class ROS2InterfaceConfig:
 
     gripper_action_type: GripperActionType = GripperActionType.TRAJECTORY
     gripper_type: GripperType = GripperType.GRIPPER
+
+    use_6d_rotation: bool = False
 
 
 @dataclass
@@ -501,5 +505,147 @@ class UR10eRealConfig(ROS2Config):
             gripper_close_position=0.0001,
             max_linear_velocity=0.05,
             max_angular_velocity=0.25,
+        )
+    )
+
+@RobotConfig.register_subclass("nora_robot_real")
+@dataclass
+class NoraRobotRealConfig(ROS2Config):
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    
+    
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+             "top_center_camera": ROS2CameraConfig(
+                 topic='/top_camera/rgb/image_raw/compressed',
+                 node_name="top_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=720,
+                 height=720,
+                 rotation=Cv2Rotation.ROTATE_270,
+                 crop_box=[560, 1280, 0, 720] # This crops the output to 720 x 720
+             ),
+
+             "top_left_camera": ROS2CameraConfig(
+                 topic='/side_camera/rgb/image_raw/compressed',
+                 node_name="side_cam",
+                 camera_type="compressed_camera",
+                 color_mode=ColorMode.RGB,
+                 fps=30,
+                 width=1280,
+                 height=720,
+            ),
+
+            "middle_left_camera": ROS2CameraConfig(
+                topic='/wrist_camera/image_raw/compressed',
+                node_name="wrist_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=1280,
+                height=720,
+            ),
+        })
+
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "current_robot_pose.0",
+        "current_robot_pose.1",
+        "current_robot_pose.2",
+        "current_robot_pose.3",
+        "current_robot_pose.4",
+        "current_robot_pose.5",
+        "current_robot_pose.6",
+        "current_robot_pose.7",
+        "current_robot_pose.8",
+        ]
+    )
+
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            use_6d_rotation=True,
+
+            gripper_action_type=GripperActionType.NONE,
+        )
+    )
+
+@RobotConfig.register_subclass("nora_robot_sim")
+@dataclass
+class NoraRobotSimConfig(ROS2Config):
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic='/top_cam/image',
+                node_name="top_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=360,
+                height=640,
+                rotation=Cv2Rotation.ROTATE_270
+            ),
+
+            "top_left_camera": ROS2CameraConfig(
+                topic='/side_cam/image',
+                node_name="side_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=640,
+                height=360,
+            ),
+
+            "middle_left_camera": ROS2CameraConfig(
+                topic='/wrist_cam/image',
+                node_name="wrist_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
+                fps=30,
+                width=640,
+                height=360,
+            ),
+        }
+    )
+
+    observation_names: list[str] = field(
+        default_factory=lambda: [
+        "current_robot_pose.0.pos",
+        "current_robot_pose.1.pos",
+        "current_robot_pose.2.pos",
+        "current_robot_pose.3.pos",
+        "current_robot_pose.4.pos",
+        "current_robot_pose.5.pos",
+        "current_robot_pose.6.pos",
+        "current_robot_pose.7.pos",
+        "current_robot_pose.8.pos",
+        ]
+    )
+
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="world",
+            arm_joint_names=[
+                "shoulder_pan_joint",
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+            ],
+            use_6d_rotation=True,
+
+            gripper_action_type=GripperActionType.NONE,
         )
     )

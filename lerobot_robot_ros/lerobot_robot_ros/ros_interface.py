@@ -17,6 +17,9 @@ import logging
 import threading
 import time
 
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
 import rclpy
 from control_msgs.action import ParallelGripperCommand, GripperCommand
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -109,11 +112,27 @@ class ROS2Interface:
             )
             self._twist_msg = TwistStamped()
 
+        elif self.action_type == ActionType.CARTESIAN_POSITION:
+            self.pos_cmd_pub = self.robot_node.create_publisher(
+                PoseStamped,
+                "/cartesian_motion_controller/target_frame",
+                qos.QoSProfile(
+                    durability=qos.QoSDurabilityPolicy.VOLATILE,
+                    reliability=qos.QoSReliabilityPolicy.RELIABLE,
+                    history=qos.QoSHistoryPolicy.KEEP_ALL
+                ))
+            self.cart_pose_sub = self.robot_node.create_subscription(
+                PoseStamped,
+                "/cartesian_motion_controller/current_pose",
+                self._cart_pose_callback,
+                10
+            )
+
         if self.config.gripper_action_type == GripperActionType.TRAJECTORY:
             self.gripper_traj_pub = self.robot_node.create_publisher(
                 JointTrajectory, "/gripper_controller/joint_trajectory", 10
             )
-        else:
+        elif self.config.gripper_action_type == GripperActionType.ACTION:
             if self.config.gripper_type == GripperType.GRIPPER:
                 self.gripper_action_client = ActionClient(
                     self.robot_node,
@@ -133,6 +152,8 @@ class ROS2Interface:
                 self._goal_msg = ParallelGripperCommand.Goal()
             else:
                 self.robot_node.get_logger().warn("No GripperType defined, how did this happen?")
+        else:
+            pass
 
         self.joint_state_sub = self.robot_node.create_subscription(
             JointState,
@@ -221,6 +242,45 @@ class ROS2Interface:
             self.twist_pub.publish(twist_msg)
             return
 
+    def send_cartesian_position_command(self, pose) -> None:
+        position = pose[:3]
+    
+        # Split the 6D representation into two 3D vectors
+        v1 = pose[3:6]
+        v2 = pose[6:9]
+
+        # 1. Gram-Schmidt Orthogonalization
+        # Normalize the first vector (this forms the first column of the matrix)
+        c1 = v1 / np.linalg.norm(v1)
+        
+        # Make the second vector orthogonal to the first, then normalize (second column)
+        u2 = v2 - np.dot(c1, v2) * c1
+        c2 = u2 / np.linalg.norm(u2)
+        
+        # The third column is the cross product of the first two orthogonal vectors
+        c3 = np.cross(c1, c2)
+        
+        # 2. Reconstruct the 3x3 Rotation Matrix (stacking columns)
+        rot_matrix = np.column_stack((c1, c2, c3))
+        
+        # 3. Convert to target format (XYZW Quaternion)
+        quat_xyzw = R.from_matrix(rot_matrix).as_quat()
+
+        pose_msg = PoseStamped()
+        pose_msg.header.frame_id = self.config.base_link
+        pose_msg.header.stamp = self.robot_node.get_clock().now().to_msg()
+
+        pose_msg.pose.position.x = float(position[0])
+        pose_msg.pose.position.y = float(position[1])
+        pose_msg.pose.position.z = float(position[2])
+
+        pose_msg.pose.orientation.x = float(quat_xyzw[0])
+        pose_msg.pose.orientation.y = float(quat_xyzw[1])
+        pose_msg.pose.orientation.z = float(quat_xyzw[2])
+        pose_msg.pose.orientation.w = float(quat_xyzw[3])
+
+        self.pos_cmd_pub.publish(pose_msg)
+
 
 
     def send_gripper_command(self, position: float, unnormalize: bool = False) -> bool:
@@ -288,14 +348,14 @@ class ROS2Interface:
             positions[(joint_name + ".pos")] = msg.position[idx]
             velocities[(joint_name + ".pos")] = msg.velocity[idx]
 
-
-        idx = name_to_index.get(self.config.gripper_joint_name)
-        if idx is None:
-            raise ValueError(
-                f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
-            )
-        positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
-        velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
+        if self.config.gripper_action_type is not GripperActionType.NONE:
+            idx = name_to_index.get(self.config.gripper_joint_name)
+            if idx is None:
+                raise ValueError(
+                    f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
+                )
+            positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
+            velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities
@@ -303,26 +363,44 @@ class ROS2Interface:
     def _cart_pose_callback(self, msg: "PoseStamped") -> None:
         """
         Callback function for the PoseStamped subscriber.
-        Extracts Cartesian position and Quaternion orientation.
+        Extracts Cartesian position and converts orientation based on config.
         """
         self._last_joint_state = self._last_joint_state or {}
-        # 1. Extract Position (x, y, z)
-        position = msg.pose.position
         
-        # 2. Extract Orientation (x, y, z, w)
+        position = msg.pose.position
         orientation = msg.pose.orientation
 
-        # 3. Store in a data structure (e.g., a dictionary instance variable)
-        self._last_joint_state["cart_pose"] = {
+        cart_pose = {
             "pose.x": position.x,
             "pose.y": position.y,
             "pose.z": position.z,
-            "pose.quat_x": orientation.x,
-            "pose.quat_y": orientation.y,
-            "pose.quat_z": orientation.z,
-            "pose.quat_w": orientation.w
         }
 
+        # Toggle via your config (e.g., self.config.use_6d_rotation or an Enum)
+        if getattr(self.config, 'use_6d_rotation', False): 
+            # Convert XYZW quaternion to 3x3 matrix
+            r = R.from_quat([orientation.x, orientation.y, orientation.z, orientation.w])
+            rot_mat = r.as_matrix()
+            
+            # Extract first two columns for 6D representation
+            cart_pose.update({
+                "pose.r11": float(rot_mat[0, 0]),
+                "pose.r21": float(rot_mat[1, 0]),
+                "pose.r31": float(rot_mat[2, 0]),
+                "pose.r12": float(rot_mat[0, 1]),
+                "pose.r22": float(rot_mat[1, 1]),
+                "pose.r32": float(rot_mat[2, 1]),
+            })
+        else:
+            # Fallback to standard quaternion
+            cart_pose.update({
+                "pose.quat_x": orientation.x,
+                "pose.quat_y": orientation.y,
+                "pose.quat_z": orientation.z,
+                "pose.quat_w": orientation.w,
+            })
+
+        self._last_joint_state["cart_pose"] = cart_pose
     def disconnect(self):
         if self.joint_state_sub:
             self.joint_state_sub.destroy()
