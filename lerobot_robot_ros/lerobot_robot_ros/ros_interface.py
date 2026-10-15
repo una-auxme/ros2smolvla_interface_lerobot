@@ -41,6 +41,24 @@ from .moveit_servo import MoveIt2Servo
 logger = logging.getLogger(__name__)
 
 
+def rotate_pose9_z(pose, yaw_deg: float, inverse: bool = False) -> np.ndarray:
+    """Rotate a 9-D pose (xyz + first two rotation-matrix columns) about the z axis.
+
+    Applies p' = Rz(yaw) p to the position and to both rotation columns, i.e. R' = Rz(yaw) R.
+    With `inverse=True` the opposite rotation is applied.
+    """
+    pose = np.asarray(pose, dtype=float)
+    if pose.shape != (9,):
+        raise ValueError(f"Expected a 9-D pose, got shape {pose.shape}")
+    if yaw_deg == 0.0:
+        return pose.copy()
+    yaw = np.deg2rad(-yaw_deg if inverse else yaw_deg)
+    c, s = np.cos(yaw), np.sin(yaw)
+    rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    return np.concatenate([rz @ pose[0:3], rz @ pose[3:6], rz @ pose[6:9]])
+
+
+
 class ROS2Interface:
     """Class to interface with a MoveIt2 manipulator.
 
@@ -167,7 +185,22 @@ class ROS2Interface:
         self.executor.add_node(self.robot_node)
         self.executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.executor_thread.start()
-        time.sleep(3)  # Give some time to connect to services and receive messages
+        time.sleep(1)  # Give some time to connect to services
+
+        # Block until the first joint state (and Cartesian pose, if used) arrived, so that the very
+        # first get_observation() right after connect() does not fail.
+        needs_pose = self.cart_pose_sub is not None
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            state = self._last_joint_state or {}
+            if "position" in state and (not needs_pose or "cart_pose" in state):
+                break
+            time.sleep(0.1)
+        else:
+            logger.warning(
+                "No joint state%s received within 15 s. Is the robot / controller running?",
+                " / Cartesian pose" if needs_pose else "",
+            )
 
         self.is_connected = True
 
@@ -242,12 +275,42 @@ class ROS2Interface:
             self.twist_pub.publish(twist_msg)
             return
 
-    def send_cartesian_position_command(self, pose) -> None:
-        position = pose[:3]
-    
+    def send_cartesian_position_command(self, pose) -> bool:
+        """Send an absolute pose (xyz + first two rotation-matrix columns) to the motion controller.
+
+        Returns False (and sends nothing) if the pose is invalid.
+        """
+        pose = np.asarray(pose, dtype=float)
+        if pose.shape != (9,) or not np.all(np.isfinite(pose)):
+            logger.error(f"Dropping invalid pose command: {pose}")
+            return False
+
+        position = pose[:3].copy()
+
         # Split the 6D representation into two 3D vectors
         v1 = pose[3:6]
         v2 = pose[6:9]
+        if np.linalg.norm(v1) < 1e-6:
+            logger.error("Dropping pose command: first rotation column has ~zero norm")
+            return False
+        u2_check = v2 - np.dot(v1 / np.linalg.norm(v1), v2) * (v1 / np.linalg.norm(v1))
+        if np.linalg.norm(u2_check) < 1e-6:
+            logger.error("Dropping pose command: rotation columns are parallel")
+            return False
+
+        # Safety: keep target inside the workspace box and within max_cartesian_step of the current pose
+        if self.config.workspace_min is not None and self.config.workspace_max is not None:
+            position = np.clip(position, self.config.workspace_min, self.config.workspace_max)
+        if self.config.max_cartesian_step is not None:
+            current = (self._last_joint_state or {}).get("cart_pose")
+            if current is None:
+                logger.error("Dropping pose command: current pose unknown, cannot apply step limit")
+                return False
+            cur_pos = np.array([current["pose.x"], current["pose.y"], current["pose.z"]])
+            step = position - cur_pos
+            dist = np.linalg.norm(step)
+            if dist > self.config.max_cartesian_step:
+                position = cur_pos + step * (self.config.max_cartesian_step / dist)
 
         # 1. Gram-Schmidt Orthogonalization
         # Normalize the first vector (this forms the first column of the matrix)
@@ -280,8 +343,7 @@ class ROS2Interface:
         pose_msg.pose.orientation.w = float(quat_xyzw[3])
 
         self.pos_cmd_pub.publish(pose_msg)
-
-
+        return True
 
     def send_gripper_command(self, position: float, unnormalize: bool = False) -> bool:
         """

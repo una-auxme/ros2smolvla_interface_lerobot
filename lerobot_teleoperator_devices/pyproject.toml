@@ -26,7 +26,7 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 keywords = ["robotics", "deep learning", "pytorch", "ros2"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -38,7 +38,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "lerobot>=0.4.0",
+    "lerobot>=0.6.0",
     "pygame",
 ]
 

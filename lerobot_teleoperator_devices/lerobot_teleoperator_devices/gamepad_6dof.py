@@ -62,7 +62,7 @@ class Gamepad6DOFTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         self.gamepad = GamepadController6DOF()
         self.gamepad.start()
 
@@ -103,6 +103,7 @@ class Gamepad6DOFTeleop(Teleoperator):
             self.gamepad.stop()
             self.gamepad = None
 
+    @property
     def is_connected(self) -> bool:
         """Check if gamepad is connected."""
         return self.gamepad is not None
@@ -112,6 +113,7 @@ class Gamepad6DOFTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration

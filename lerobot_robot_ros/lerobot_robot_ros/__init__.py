@@ -13,4 +13,4 @@
 # limitations under the License.
 
 from .config import ROS2Config, UR10eRealConfig, UR10eSimConfig
-from .robot import UR10eReal, UR10eSim, ROS2Robot, NoraRobot, NoraRobotReal, NoraRobotSim
+from .robot import UR10eReal, UR10eSim, ROS2Robot, NoraRobot, NoraRobotReal, NoraRobotSim, NoraRobotSimNoMiddle, NoraRobotRealNoMiddle

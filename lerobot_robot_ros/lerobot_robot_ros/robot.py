@@ -24,7 +24,7 @@ from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .config import ActionType, ROS2Config
-from .ros_interface import ROS2Interface
+from .ros_interface import ROS2Interface, rotate_pose9_z
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,8 @@ class NoraRobot(Robot):
 
         obs_dict: dict[str, Any] = {}
         joint_state = self.ros2_interface.joint_state
+        if joint_state is None or "cart_pose" not in joint_state or "position" not in joint_state:
+            raise RuntimeError("No joint state / Cartesian pose received yet. Is the controller running?")
 
         # 1. Dynamically map joint names based on their index in the config
         joint_mapping = {
@@ -291,19 +293,31 @@ class NoraRobot(Robot):
             "pose.r32": "current_robot_pose.8.pos",
         }
 
-        for ros_key, pos in joint_state["cart_pose"].items():
-            std_name = cartesian_mapping.get(ros_key)
-            if std_name and std_name in self.config.observation_names:
-                obs_dict[std_name] = pos
+        cart_values = {
+            std_name: pos
+            for ros_key, pos in joint_state["cart_pose"].items()
+            if (std_name := cartesian_mapping.get(ros_key)) and std_name in self.config.observation_names
+        }
+
+        # Express the pose in the frame the policy's data was generated in
+        yaw = self.config.ros2_interface.data_frame_yaw_deg
+        if yaw != 0.0:
+            names = [f"current_robot_pose.{n}.pos" for n in range(9)]
+            if all(n in cart_values for n in names):
+                rotated = rotate_pose9_z([cart_values[n] for n in names], yaw)
+                cart_values.update(dict(zip(names, rotated.tolist())))
+            else:
+                logger.warning("data_frame_yaw_deg is set but the full 9-D pose is not observed; not rotating")
+        obs_dict.update(cart_values)
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             try:
                 obs_dict[cam_key] = cam.async_read(timeout_ms=300)
-            except Exception as e:
-                logger.error(f"Failed to read camera {cam_key}: {e}")
-                obs_dict[cam_key] = None
+            except TimeoutError:
+                # Camera slower than the control loop: reuse the latest frame instead of failing
+                obs_dict[cam_key] = cam.read_latest(max_age_ms=1000)
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
@@ -363,7 +377,12 @@ class NoraRobot(Robot):
             self.ros2_interface.send_joint_position_command(joint_positions)
 
         elif self.config.action_type is ActionType.CARTESIAN_POSITION:
-            pose = [action[f"target_robot_pose.{n}.pos"] for n in range(9)]
+            # `lerobot-rollout` returns the robot to its initial position by replaying the
+            # observation keys (`current_robot_pose.N.pos`), so accept those as a pose target too.
+            prefix = "target_robot_pose" if "target_robot_pose.0.pos" in action else "current_robot_pose"
+            pose = [action[f"{prefix}.{n}.pos"] for n in range(9)]
+            # Policy frame -> robot frame
+            pose = rotate_pose9_z(pose, self.config.ros2_interface.data_frame_yaw_deg, inverse=True)
             self.ros2_interface.send_cartesian_position_command(pose)
 
         return action
@@ -395,4 +414,11 @@ class NoraRobotReal(NoraRobot):
     pass
 
 class NoraRobotSim(NoraRobot):
+    pass
+
+class NoraRobotSimNoMiddle(NoraRobot):
+    pass
+
+
+class NoraRobotRealNoMiddle(NoraRobot):
     pass

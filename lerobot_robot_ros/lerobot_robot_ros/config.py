@@ -78,6 +78,19 @@ class ROS2InterfaceConfig:
 
     use_6d_rotation: bool = False
 
+    # Only applicable for ActionType.CARTESIAN_POSITION with `use_6d_rotation`.
+    # Rotation about the z axis (degrees) that maps the robot's `base_link` frame into the frame the
+    # policy's data was generated in: observations are rotated by +yaw before they reach the policy,
+    # actions by -yaw before they are sent to the robot.
+    data_frame_yaw_deg: float = 0.0
+
+    # Only applicable for ActionType.CARTESIAN_POSITION. Maximum distance (m) a commanded target
+    # may be away from the current pose. Targets further away are pulled back onto this sphere.
+    max_cartesian_step: float | None = None
+    # Optional workspace box ((x_min, y_min, z_min), (x_max, y_max, z_max)) in `base_link`.
+    workspace_min: tuple[float, float, float] | None = None
+    workspace_max: tuple[float, float, float] | None = None
+
 
 @dataclass
 class ROS2Config(RobotConfig):
@@ -551,15 +564,15 @@ class NoraRobotRealConfig(ROS2Config):
 
     observation_names: list[str] = field(
         default_factory=lambda: [
-        "current_robot_pose.0",
-        "current_robot_pose.1",
-        "current_robot_pose.2",
-        "current_robot_pose.3",
-        "current_robot_pose.4",
-        "current_robot_pose.5",
-        "current_robot_pose.6",
-        "current_robot_pose.7",
-        "current_robot_pose.8",
+        "current_robot_pose.0.pos",
+        "current_robot_pose.1.pos",
+        "current_robot_pose.2.pos",
+        "current_robot_pose.3.pos",
+        "current_robot_pose.4.pos",
+        "current_robot_pose.5.pos",
+        "current_robot_pose.6.pos",
+        "current_robot_pose.7.pos",
+        "current_robot_pose.8.pos",
         ]
     )
 
@@ -645,7 +658,102 @@ class NoraRobotSimConfig(ROS2Config):
                 "wrist_3_joint",
             ],
             use_6d_rotation=True,
+            data_frame_yaw_deg=180.0,
 
             gripper_action_type=GripperActionType.NONE,
+        )
+    )
+
+
+_POSE_OBS_NAMES = [f"current_robot_pose.{n}.pos" for n in range(9)]
+_UR_ARM_JOINTS = [
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
+]
+
+
+@RobotConfig.register_subclass("nora_robot_sim_no_middle")
+@dataclass
+class NoraRobotSimNoMiddleConfig(ROS2Config):
+    """Sim, without the middle_left camera. Images are 640x360 (W x H), unrotated, like the SDG training data."""
+
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic="/top_cam/image",
+                node_name="top_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR,  # see workaround note in the other sim configs
+                fps=30,
+                width=640,
+                height=360,
+            ),
+            "top_left_camera": ROS2CameraConfig(
+                topic="/side_cam/image",
+                node_name="side_cam",
+                camera_type="camera",
+                color_mode=ColorMode.BGR,  # see workaround note in the other sim configs
+                fps=30,
+                width=640,
+                height=360,
+            ),
+        }
+    )
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_OBS_NAMES))
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="world",
+            arm_joint_names=list(_UR_ARM_JOINTS),
+            use_6d_rotation=True,
+            data_frame_yaw_deg=180.0,
+            gripper_action_type=GripperActionType.NONE,
+            max_cartesian_step=0.05,
+        )
+    )
+
+
+@RobotConfig.register_subclass("nora_robot_real_no_middle")
+@dataclass
+class NoraRobotRealNoMiddleConfig(ROS2Config):
+    """Real robot, without the middle_left camera. 1280x720 feeds are downscaled to 640x360, unrotated and uncropped."""
+
+    action_type: ActionType = ActionType.CARTESIAN_POSITION
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "top_center_camera": ROS2CameraConfig(
+                topic="/top_camera/rgb/image_raw/compressed",
+                node_name="top_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=640,
+                height=360,
+                resize=(640, 360),
+            ),
+            "top_left_camera": ROS2CameraConfig(
+                topic="/side_camera/rgb/image_raw/compressed",
+                node_name="side_cam",
+                camera_type="compressed_camera",
+                color_mode=ColorMode.RGB,
+                fps=30,
+                width=640,
+                height=360,
+                resize=(640, 360),
+            ),
+        }
+    )
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_OBS_NAMES))
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=list(_UR_ARM_JOINTS),
+            use_6d_rotation=True,
+            gripper_action_type=GripperActionType.NONE,
+            max_cartesian_step=0.02,
         )
     )
