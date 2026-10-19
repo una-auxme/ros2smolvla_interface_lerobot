@@ -25,6 +25,7 @@ from lerobot_camera_roscam.roscam_config import ROS2CameraConfig
 class ActionType(Enum):
     CARTESIAN_VELOCITY = "cartesian_velocity"
     CARTESIAN_VELOCITY_TWIST_MSG = "cartesian_velocity_twist_msg"
+    CARTESIAN_POSITION = "cartesian_position"
     JOINT_POSITION = "joint_position"
     JOINT_TRAJECTORY = "joint_trajectory"
 
@@ -80,6 +81,34 @@ class ROS2InterfaceConfig:
 
     # Robot state (joint states, Cartesian pose) older than this many seconds is reported as stale
     max_state_age_s: float = 0.5
+
+    # Observe the end effector orientation as the first two rotation-matrix columns ("pose.r11" ...
+    # "pose.r32") instead of a quaternion ("pose.quat_x" ... "pose.quat_w").
+    use_6d_rotation: bool = False
+
+    # Only applicable for ActionType.CARTESIAN_POSITION. Maximum distance (m) a commanded target
+    # may be away from the current pose. Targets further away are pulled back onto this sphere.
+    max_cartesian_step: float | None = None
+    # Only applicable for ActionType.CARTESIAN_POSITION. Maximum rotation (rad) a commanded target
+    # may be away from the current orientation. Larger rotations are shortened along the same axis.
+    max_rotation_step: float | None = None
+    # Optional workspace box ((x_min, y_min, z_min), (x_max, y_max, z_max)) in `base_link`.
+    # Either bound may be set on its own.
+    workspace_min: tuple[float, float, float] | None = None
+    workspace_max: tuple[float, float, float] | None = None
+
+    def __post_init__(self):
+        for name in ("workspace_min", "workspace_max"):
+            bound = getattr(self, name)
+            if bound is not None and len(bound) != 3:
+                raise ValueError(f"{name} must have 3 elements (x, y, z), got {bound}")
+        if self.workspace_min is not None and self.workspace_max is not None:
+            if any(lo > hi for lo, hi in zip(self.workspace_min, self.workspace_max, strict=True)):
+                raise ValueError(f"workspace_min {self.workspace_min} exceeds workspace_max {self.workspace_max}")
+        for name in ("max_cartesian_step", "max_rotation_step"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive, got {value}")
 
 
 @dataclass

@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 
+import numpy as np
 import rclpy
 from control_msgs.action import ParallelGripperCommand, GripperCommand
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -31,9 +32,11 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import TwistStamped, PoseStamped
+from scipy.spatial.transform import Rotation as R
 
 from .config import ActionType, GripperActionType, GripperType, ROS2InterfaceConfig
 from .moveit_servo import MoveIt2Servo
+from .safety import limit_position, limit_rotation, rotation_from_6d
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,7 @@ class ROS2Interface:
         self.pos_cmd_pub: Publisher | None = None
         self.traj_cmd_pub: Publisher | None = None
         self.twist_pub: Publisher | None = None
+        self.pose_cmd_pub: Publisher | None = None
         self.joint_state_sub: Subscription | None = None
         self.cart_pose_sub: Subscription | None = None 
         self.gripper_action_client: ActionClient | None = None
@@ -74,6 +78,9 @@ class ROS2Interface:
         self._last_joint_state: dict[str, dict[str, float]] | None = None
         # time.monotonic() of the last update per state kind ("position", "cart_pose")
         self._state_stamps: dict[str, float] = {}
+        # Last measured end effector pose (position, orientation), used by the pose safety checks
+        self._current_pose: tuple[np.ndarray, R] | None = None
+        self._warned_pose_frame = False
 
     @property
     def is_connected(self) -> bool:
@@ -120,6 +127,24 @@ class ROS2Interface:
                 10
             )
             self._twist_msg = TwistStamped()
+
+        elif self.action_type == ActionType.CARTESIAN_POSITION:
+            # Only the latest target matters: never let a backlog of old targets queue up
+            self.pose_cmd_pub = self.robot_node.create_publisher(
+                PoseStamped,
+                "/cartesian_motion_controller/target_frame",
+                qos.QoSProfile(
+                    durability=qos.QoSDurabilityPolicy.VOLATILE,
+                    reliability=qos.QoSReliabilityPolicy.RELIABLE,
+                    history=qos.QoSHistoryPolicy.KEEP_LAST,
+                    depth=1,
+                ))
+            self.cart_pose_sub = self.robot_node.create_subscription(
+                PoseStamped,
+                "/cartesian_motion_controller/current_pose",
+                self._cart_pose_callback,
+                10
+            )
 
         if self.config.gripper_action_type == GripperActionType.TRAJECTORY:
             self.gripper_traj_pub = self.robot_node.create_publisher(
@@ -254,7 +279,63 @@ class ROS2Interface:
             self.twist_pub.publish(twist_msg)
             return
 
+    def send_cartesian_position_command(self, pose) -> bool:
+        """Send an absolute pose (xyz + first two rotation-matrix columns) to the motion controller.
 
+        The pose is expressed in `base_link`. It is limited by `workspace_min` / `workspace_max`,
+        `max_cartesian_step` and `max_rotation_step`, if configured.
+
+        Returns False (and sends nothing) if the pose is invalid, or if a step limit is configured but
+        the current pose is unknown or stale.
+        """
+        if not self.robot_node or self.pose_cmd_pub is None:
+            raise DeviceNotConnectedError("Pose command publisher is not initialized. You need to call `connect()`.")
+
+        pose = np.asarray(pose, dtype=float)
+        if pose.shape != (9,) or not np.all(np.isfinite(pose)):
+            logger.error(f"Dropping invalid pose command: {pose}")
+            return False
+        rot_matrix = rotation_from_6d(pose[3:6], pose[6:9])
+        if rot_matrix is None:
+            logger.error(f"Dropping pose command with degenerate rotation columns: {pose[3:]}")
+            return False
+        target_rot = R.from_matrix(rot_matrix)
+
+        current_position = current_rot = None
+        if self.config.max_cartesian_step is not None or self.config.max_rotation_step is not None:
+            age = self.state_age("cart_pose")
+            if self._current_pose is None or age is None or age > self.config.max_state_age_s:
+                logger.error(
+                    "Dropping pose command: current pose is %s, cannot apply step limit",
+                    "unknown" if age is None else f"stale ({age:.2f} s old)",
+                )
+                return False
+            current_position, current_rot = self._current_pose
+
+        position = limit_position(
+            pose[:3],
+            current_position,
+            self.config.workspace_min,
+            self.config.workspace_max,
+            self.config.max_cartesian_step,
+        )
+        if self.config.max_rotation_step is not None:
+            target_rot = limit_rotation(target_rot, current_rot, self.config.max_rotation_step)
+        quat_xyzw = target_rot.as_quat()
+
+        pose_msg = PoseStamped()
+        pose_msg.header.frame_id = self.config.base_link
+        pose_msg.header.stamp = self.robot_node.get_clock().now().to_msg()
+        pose_msg.pose.position.x = float(position[0])
+        pose_msg.pose.position.y = float(position[1])
+        pose_msg.pose.position.z = float(position[2])
+        pose_msg.pose.orientation.x = float(quat_xyzw[0])
+        pose_msg.pose.orientation.y = float(quat_xyzw[1])
+        pose_msg.pose.orientation.z = float(quat_xyzw[2])
+        pose_msg.pose.orientation.w = float(quat_xyzw[3])
+
+        self.pose_cmd_pub.publish(pose_msg)
+        return True
 
     def send_gripper_command(self, position: float, unnormalize: bool = False) -> bool:
         """
@@ -352,25 +433,60 @@ class ROS2Interface:
     def _cart_pose_callback(self, msg: "PoseStamped") -> None:
         """
         Callback function for the PoseStamped subscriber.
-        Extracts Cartesian position and Quaternion orientation.
+        Extracts Cartesian position and the orientation, as quaternion or 6D rotation (see `use_6d_rotation`).
+        Must never raise, see _joint_state_callback.
         """
-        self._last_joint_state = self._last_joint_state or {}
-        # 1. Extract Position (x, y, z)
         position = msg.pose.position
-        
-        # 2. Extract Orientation (x, y, z, w)
         orientation = msg.pose.orientation
+        quat_xyzw = [orientation.x, orientation.y, orientation.z, orientation.w]
+        try:
+            rotation = R.from_quat(quat_xyzw)
+        except ValueError:
+            logger.error(f"Ignoring Cartesian pose with invalid orientation {quat_xyzw}")
+            return
 
-        # 3. Store in a data structure (e.g., a dictionary instance variable)
-        self._last_joint_state["cart_pose"] = {
+        if (
+            self.action_type == ActionType.CARTESIAN_POSITION
+            and msg.header.frame_id
+            and msg.header.frame_id != self.config.base_link
+            and not self._warned_pose_frame
+        ):
+            # The cartesian_motion_controller drops targets that are not in its robot_base_link frame
+            logger.warning(
+                f"The current pose is reported in '{msg.header.frame_id}', but base_link is "
+                f"'{self.config.base_link}'. Pose commands will be rejected by the controller: "
+                "set base_link to the controller's robot_base_link."
+            )
+            self._warned_pose_frame = True
+
+        cart_pose = {
             "pose.x": position.x,
             "pose.y": position.y,
             "pose.z": position.z,
-            "pose.quat_x": orientation.x,
-            "pose.quat_y": orientation.y,
-            "pose.quat_z": orientation.z,
-            "pose.quat_w": orientation.w
         }
+        if self.config.use_6d_rotation:
+            # First two columns of the rotation matrix
+            rot_mat = rotation.as_matrix()
+            cart_pose.update({
+                "pose.r11": float(rot_mat[0, 0]),
+                "pose.r21": float(rot_mat[1, 0]),
+                "pose.r31": float(rot_mat[2, 0]),
+                "pose.r12": float(rot_mat[0, 1]),
+                "pose.r22": float(rot_mat[1, 1]),
+                "pose.r32": float(rot_mat[2, 1]),
+            })
+        else:
+            cart_pose.update({
+                "pose.quat_x": orientation.x,
+                "pose.quat_y": orientation.y,
+                "pose.quat_z": orientation.z,
+                "pose.quat_w": orientation.w,
+            })
+
+        state = self._last_joint_state or {}
+        state["cart_pose"] = cart_pose
+        self._last_joint_state = state
+        self._current_pose = (np.array([position.x, position.y, position.z]), rotation)
         self._state_stamps["cart_pose"] = time.monotonic()
 
     def disconnect(self):
@@ -399,6 +515,9 @@ class ROS2Interface:
         if self.twist_pub:
             self.twist_pub.destroy()
             self.twist_pub = None
+        if self.pose_cmd_pub:
+            self.pose_cmd_pub.destroy()
+            self.pose_cmd_pub = None
         if self.gripper_action_client:
             self.gripper_action_client.destroy()
             self.gripper_action_client = None
