@@ -29,6 +29,8 @@ from .ros_interface import ROS2Interface
 logger = logging.getLogger(__name__)
 
 GRIPPER_ACTION_KEY = "gripper.pos"
+# Gripper actions are normalized: 0 = open, 1 = closed
+GRIPPER_CLOSE_THRESHOLD = 0.5
 
 
 class ROS2Robot(Robot):
@@ -41,7 +43,6 @@ class ROS2Robot(Robot):
         self.ros2_interface = ROS2Interface(config.ros2_interface, config.action_type)
         self.cameras = make_cameras_from_configs(config.cameras)
         self.last_gripper_action = None
-        self.gripper_center = (self.config.ros2_interface.gripper_open_position - self.config.ros2_interface.gripper_close_position) / 2
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -184,18 +185,15 @@ class ROS2Robot(Robot):
             joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
             self.ros2_interface.send_joint_position_command(joint_positions)
 
-        if self.config.ros2_interface.gripper_joint_name:
-
-            if action["gripper.pos"] > self.gripper_center:
+        if self.config.ros2_interface.gripper_joint_name and GRIPPER_ACTION_KEY in action:
+            if action[GRIPPER_ACTION_KEY] > GRIPPER_CLOSE_THRESHOLD:
                 gripper_pos = self.config.ros2_interface.gripper_close_position
             else:
                 gripper_pos = self.config.ros2_interface.gripper_open_position
 
-            if gripper_pos == self.last_gripper_action:
-                pass
-            else:
-               self.last_gripper_action = gripper_pos
-               self.ros2_interface.send_gripper_command(gripper_pos)
+            # Only send on change; remember it only once it went out, so a failed send is retried
+            if gripper_pos != self.last_gripper_action and self.ros2_interface.send_gripper_command(gripper_pos):
+                self.last_gripper_action = gripper_pos
         return action
 
     def _clip_relative(self, goal_present: dict[str, tuple[float, float]]) -> dict[str, float]:
