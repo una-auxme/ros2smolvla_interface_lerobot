@@ -28,6 +28,8 @@ from .ros_interface import ROS2Interface
 
 logger = logging.getLogger(__name__)
 
+GRIPPER_ACTION_KEY = "gripper.pos"
+
 
 class ROS2Robot(Robot):
     config_class = ROS2Config
@@ -144,12 +146,15 @@ class ROS2Robot(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        action = dict(action)
         if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
             if self.config.max_relative_target is not None:
                 # We don't have the current velocity of the arm, so set it to 0.0
                 # Effectively the goal velocity gets clipped by max_relative_target
-                goal_present_vel = {key: (act, 0.0) for key, act in action.items()}
-                action = ensure_safe_goal_position(goal_present_vel, self.config.max_relative_target)
+                goal_present_vel = {
+                    key: (act, 0.0) for key, act in action.items() if key != GRIPPER_ACTION_KEY
+                }
+                action.update(self._clip_relative(goal_present_vel))
 
             linear_vel = (
                 action["linear_x.vel"],
@@ -164,15 +169,17 @@ class ROS2Robot(Robot):
             self.ros2_interface.servo(linear=linear_vel, angular=angular_vel)
         elif self.config.action_type in (ActionType.JOINT_POSITION, ActionType.JOINT_TRAJECTORY):
             if self.config.max_relative_target is not None:
-                goal_present_pos = {}
                 joint_state = self.ros2_interface.joint_state
-                if joint_state is None:
+                if joint_state is None or "position" not in joint_state:
                     raise ValueError("Joint state is not available yet.")
 
-                for key, goal in action.items():
-                    present_pos = joint_state["position"].get(key.replace(".pos", ""), 0.0)
-                    goal_present_pos[key] = (goal, present_pos)
-                action = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+                goal_present_pos = {}
+                for joint in self.config.ros2_interface.arm_joint_names:
+                    key = f"{joint}.pos"
+                    if key not in joint_state["position"]:
+                        raise ValueError(f"No present position for '{joint}', cannot apply max_relative_target.")
+                    goal_present_pos[key] = (action[key], joint_state["position"][key])
+                action.update(self._clip_relative(goal_present_pos))
 
             joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
             self.ros2_interface.send_joint_position_command(joint_positions)
@@ -190,6 +197,16 @@ class ROS2Robot(Robot):
                self.last_gripper_action = gripper_pos
                self.ros2_interface.send_gripper_command(gripper_pos)
         return action
+
+    def _clip_relative(self, goal_present: dict[str, tuple[float, float]]) -> dict[str, float]:
+        """Clip goals to within `max_relative_target` of their present value."""
+        max_relative_target = self.config.max_relative_target
+        if isinstance(max_relative_target, int):
+            # ensure_safe_goal_position only accepts a float or a dict
+            max_relative_target = float(max_relative_target)
+        elif isinstance(max_relative_target, dict):
+            max_relative_target = {key: max_relative_target[key] for key in goal_present}
+        return ensure_safe_goal_position(goal_present, max_relative_target)
 
     def disconnect(self):
         if not self.is_connected:
