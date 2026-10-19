@@ -70,8 +70,18 @@ class ROS2Interface:
         self.executor: Executor | None = None
         self.moveit2_servo: MoveIt2Servo | None = None
         self.executor_thread: threading.Thread | None = None
-        self.is_connected = False
+        self._connected = False
         self._last_joint_state: dict[str, dict[str, float]] | None = None
+
+    @property
+    def is_connected(self) -> bool:
+        # If the spin thread died (e.g. an exception in a callback), no state updates arrive anymore.
+        # Report that instead of silently serving a frozen joint state.
+        return self._connected and self.executor_thread is not None and self.executor_thread.is_alive()
+
+    @is_connected.setter
+    def is_connected(self, value: bool) -> None:
+        self._connected = value
 
     def connect(self) -> None:
         if not rclpy.ok():
@@ -277,30 +287,40 @@ class ROS2Interface:
         """Get the last received joint state."""
         return self._last_joint_state
 
-    def _joint_state_callback(self, msg: "JointState") -> None:
-        self._last_joint_state = self._last_joint_state or {}
-        positions = {}
-        velocities = {}
-        name_to_index = {name: i for i, name in enumerate(msg.name)}
-
-        for joint_name in self.config.arm_joint_names:
-            idx = name_to_index.get(joint_name)
-            if idx is None:
-                raise ValueError(f"Joint '{joint_name}' not found in joint state.")
-            positions[(joint_name + ".pos")] = msg.position[idx]
-            velocities[(joint_name + ".pos")] = msg.velocity[idx]
-
+    @property
+    def tracked_joint_names(self) -> list[str]:
+        """Joints whose state is read from /joint_states."""
+        names = list(self.config.arm_joint_names)
         if self.config.gripper_action_type is not GripperActionType.NONE:
-            idx = name_to_index.get(self.config.gripper_joint_name)
-            if idx is None:
-                raise ValueError(
-                    f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
-                )
-            positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
-            velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
+            names.append(self.config.gripper_joint_name)
+        return names
 
-        self._last_joint_state["position"] = positions
-        self._last_joint_state["velocity"] = velocities
+    def has_full_joint_state(self) -> bool:
+        """Whether a position has been received for every tracked joint."""
+        positions = (self._last_joint_state or {}).get("position", {})
+        return all(f"{name}.pos" in positions for name in self.tracked_joint_names)
+
+    def _joint_state_callback(self, msg: "JointState") -> None:
+        # Must never raise: an exception here propagates out of executor.spin() and stops all
+        # further state updates. Messages may also cover only a subset of the joints (e.g. a separate
+        # gripper driver publishing on the same topic), so merge them into the last known state.
+        state = self._last_joint_state or {}
+        positions = dict(state.get("position", {}))
+        velocities = dict(state.get("velocity", {}))
+
+        tracked = set(self.tracked_joint_names)
+        for idx, joint_name in enumerate(msg.name):
+            if joint_name not in tracked or idx >= len(msg.position):
+                continue
+            key = f"{joint_name}.pos"
+            positions[key] = msg.position[idx]
+            # Some publishers leave the velocity array empty
+            velocities[key] = msg.velocity[idx] if idx < len(msg.velocity) else 0.0
+
+        # Swap in new dicts instead of mutating, so readers on other threads see a consistent snapshot
+        state["position"] = positions
+        state["velocity"] = velocities
+        self._last_joint_state = state
 
     def _cart_pose_callback(self, msg: "PoseStamped") -> None:
         """
