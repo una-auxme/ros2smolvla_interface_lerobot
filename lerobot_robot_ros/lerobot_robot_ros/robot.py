@@ -254,3 +254,16 @@ class UR10eSim(ROS2Robot):
 
 class UR10eReal(ROS2Robot):
     pass
+
+
+# lerobot finds the robot class by stripping "Config" from the config class name
+class UR10eRealCrop(UR10eReal):
+    pass
+
+
+class UR10eRealNoJoints(UR10eReal):
+    pass
+
+
+class UR10eRealNoJointsCropped(UR10eReal):
+    pass

@@ -140,399 +140,124 @@ class ROS2Config(RobotConfig):
     ros2_interface: ROS2InterfaceConfig = field(default_factory=ROS2InterfaceConfig)
 
 
+_UR_ARM_JOINTS = [
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
+]
+_UR_HANDE_JOINT_OBS = [f"{joint}.pos" for joint in _UR_ARM_JOINTS] + ["robotiq_hande_left_finger_joint.pos"]
+_POSE_QUAT_OBS = ["pose.x", "pose.y", "pose.z", "pose.quat_x", "pose.quat_y", "pose.quat_z", "pose.quat_w"]
+# (ymin, ymax, xmin, xmax) of the rotated 720 x 1280 top camera image, giving a 720 x 720 frame
+_TOP_CAMERA_SQUARE_CROP = [560, 1280, 0, 720]
+
+
+def _ur_hande_interface(max_linear_velocity: float) -> ROS2InterfaceConfig:
+    """UR10e with a Robotiq Hand-E gripper."""
+    return ROS2InterfaceConfig(
+        base_link="base_link",
+        arm_joint_names=list(_UR_ARM_JOINTS),
+        gripper_joint_name="robotiq_hande_left_finger_joint",
+        gripper_action_type=GripperActionType.ACTION,
+        gripper_type=GripperType.PARALLEL_GRIPPER,
+        gripper_open_position=0.0249,
+        gripper_close_position=0.0001,
+        max_linear_velocity=max_linear_velocity,
+        max_angular_velocity=0.25,
+    )
+
+
+def _sim_camera(topic: str, node_name: str, **kwargs) -> ROS2CameraConfig:
+    return ROS2CameraConfig(
+        topic=topic,
+        node_name=node_name,
+        camera_type="camera",
+        # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and
+        # simply passes the image through
+        color_mode=ColorMode.BGR,
+        fps=30,
+        **kwargs,
+    )
+
+
+def _real_camera(topic: str, node_name: str, width: int = 1280, height: int = 720, **kwargs) -> ROS2CameraConfig:
+    return ROS2CameraConfig(
+        topic=topic,
+        node_name=node_name,
+        camera_type="compressed_camera",
+        color_mode=ColorMode.RGB,
+        fps=30,
+        width=width,
+        height=height,
+        **kwargs,
+    )
+
+
+def _real_cameras(crop_top: bool = False) -> dict[str, CameraConfig]:
+    """Top (mounted rotated, optionally cropped to a square), side and wrist camera of the real cell."""
+    if crop_top:
+        top = _real_camera(
+            "/top_camera/rgb/image_raw/compressed", "top_cam", width=720, height=720,
+            rotation=Cv2Rotation.ROTATE_270, crop_box=list(_TOP_CAMERA_SQUARE_CROP),
+        )
+    else:
+        top = _real_camera(
+            "/top_camera/rgb/image_raw/compressed", "top_cam", width=720, height=1280,
+            rotation=Cv2Rotation.ROTATE_270,
+        )
+    return {
+        "camera1": top,
+        "camera2": _real_camera("/side_camera/rgb/image_raw/compressed", "side_cam"),
+        "camera3": _real_camera("/wrist_camera/image_raw/compressed", "wrist_cam"),
+    }
+
+
 @RobotConfig.register_subclass("ur_10e_sim")
 @dataclass
 class UR10eSimConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "camera1": ROS2CameraConfig(
-                topic='/top_cam/image',
-                node_name="top_cam",
-                camera_type="camera",
-                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
-                fps=30,
-                width=360,
-                height=640,
-                rotation=Cv2Rotation.ROTATE_270
-            ),
-
-            "camera2": ROS2CameraConfig(
-                topic='/side_cam/image',
-                node_name="side_cam",
-                camera_type="camera",
-                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
-                fps=30,
-                width=640,
-                height=360,
-            ),
-
-            "camera3": ROS2CameraConfig(
-                topic='/wrist_cam/image',
-                node_name="wrist_cam",
-                camera_type="camera",
-                color_mode=ColorMode.BGR, # Workaround to leave sim image in RGB, since lerobot_camera_roscam assumes BGR input and simply passes the image through
-                fps=30,
-                width=640,
-                height=360,
-            ),
+            "camera1": _sim_camera("/top_cam/image", "top_cam", width=360, height=640, rotation=Cv2Rotation.ROTATE_270),
+            "camera2": _sim_camera("/side_cam/image", "side_cam", width=640, height=360),
+            "camera3": _sim_camera("/wrist_cam/image", "wrist_cam", width=640, height=360),
         }
     )
+    observation_names: list[str] = field(default_factory=lambda: _UR_HANDE_JOINT_OBS + _POSE_QUAT_OBS)
+    ros2_interface: ROS2InterfaceConfig = field(default_factory=lambda: _ur_hande_interface(max_linear_velocity=0.5))
 
-    observation_names: list[str] = field(
-        default_factory=lambda: [
-        "shoulder_pan_joint.pos",
-        "shoulder_lift_joint.pos",
-        "elbow_joint.pos",
-        "wrist_1_joint.pos",
-        "wrist_2_joint.pos",
-        "wrist_3_joint.pos",
-        "robotiq_hande_left_finger_joint.pos",
-        "pose.x",
-        "pose.y",
-        "pose.z",
-        "pose.quat_x",
-        "pose.quat_y",
-        "pose.quat_z",
-        "pose.quat_w",
-        ]
-    )
-
-    ros2_interface: ROS2InterfaceConfig = field(
-        default_factory=lambda: ROS2InterfaceConfig(
-            base_link="base_link",
-            arm_joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            
-            gripper_joint_name="robotiq_hande_left_finger_joint",
-            gripper_action_type=GripperActionType.ACTION,
-            gripper_type=GripperType.PARALLEL_GRIPPER,
-            gripper_open_position=0.0249,
-            gripper_close_position=0.0001,
-            max_linear_velocity=0.5,
-            max_angular_velocity=0.25,
-        )
-    )
 
 @RobotConfig.register_subclass("ur_10e_real")
 @dataclass
 class UR10eRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    
-    
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-             "camera1": ROS2CameraConfig(
-                 topic='/top_camera/rgb/image_raw/compressed',
-                 node_name="top_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=720,
-                 height=1280,
-                 rotation=Cv2Rotation.ROTATE_270
-             ),
+    cameras: dict[str, CameraConfig] = field(default_factory=_real_cameras)
+    observation_names: list[str] = field(default_factory=lambda: _UR_HANDE_JOINT_OBS + _POSE_QUAT_OBS)
+    ros2_interface: ROS2InterfaceConfig = field(default_factory=lambda: _ur_hande_interface(max_linear_velocity=0.05))
 
-             "camera2": ROS2CameraConfig(
-                 topic='/side_camera/rgb/image_raw/compressed',
-                 node_name="side_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=1280,
-                 height=720,
-            ),
-
-            "camera3": ROS2CameraConfig(
-                topic='/wrist_camera/image_raw/compressed',
-                node_name="wrist_cam",
-                camera_type="compressed_camera",
-                color_mode=ColorMode.RGB,
-                fps=30,
-                width=1280,
-                height=720,
-            ),
-        })
-    
-    observation_names: list[str] = field(
-        default_factory=lambda: [
-        "shoulder_pan_joint.pos",
-        "shoulder_lift_joint.pos",
-        "elbow_joint.pos",
-        "wrist_1_joint.pos",
-        "wrist_2_joint.pos",
-        "wrist_3_joint.pos",
-        "robotiq_hande_left_finger_joint.pos",
-        "pose.x",
-        "pose.y",
-        "pose.z",
-        "pose.quat_x",
-        "pose.quat_y",
-        "pose.quat_z",
-        "pose.quat_w",
-        ]
-    )
-
-    ros2_interface: ROS2InterfaceConfig = field(
-        default_factory=lambda: ROS2InterfaceConfig(
-            base_link="base_link",
-            arm_joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            
-            gripper_joint_name="robotiq_hande_left_finger_joint",
-            gripper_action_type=GripperActionType.ACTION,
-            gripper_type=GripperType.PARALLEL_GRIPPER,
-            gripper_open_position=0.0249,
-            gripper_close_position=0.0001,
-            max_linear_velocity=0.05,
-            max_angular_velocity=0.25,
-        )
-    )
 
 @RobotConfig.register_subclass("ur_10e_real_crop")
 @dataclass
-class UR10eRealConfig(ROS2Config):
-    action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    
-    
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-             "camera1": ROS2CameraConfig(
-                 topic='/top_camera/rgb/image_raw/compressed',
-                 node_name="top_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=720,
-                 height=720,
-                 rotation=Cv2Rotation.ROTATE_270,
-                 crop_box=[560, 1280, 0, 720] # This crops the output to 720 x 720
-             ),
+class UR10eRealCropConfig(UR10eRealConfig):
+    """Top camera cropped to a square."""
 
-             "camera2": ROS2CameraConfig(
-                 topic='/side_camera/rgb/image_raw/compressed',
-                 node_name="side_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=1280,
-                 height=720,
-            ),
-
-            "camera3": ROS2CameraConfig(
-                topic='/wrist_camera/image_raw/compressed',
-                node_name="wrist_cam",
-                camera_type="compressed_camera",
-                color_mode=ColorMode.RGB,
-                fps=30,
-                width=1280,
-                height=720,
-            ),
-        })
-    
-    observation_names: list[str] = field(
-        default_factory=lambda: [
-        "shoulder_pan_joint.pos",
-        "shoulder_lift_joint.pos",
-        "elbow_joint.pos",
-        "wrist_1_joint.pos",
-        "wrist_2_joint.pos",
-        "wrist_3_joint.pos",
-        "robotiq_hande_left_finger_joint.pos",
-        "pose.x",
-        "pose.y",
-        "pose.z",
-        "pose.quat_x",
-        "pose.quat_y",
-        "pose.quat_z",
-        "pose.quat_w",
-        ]
-    )
-
-    ros2_interface: ROS2InterfaceConfig = field(
-        default_factory=lambda: ROS2InterfaceConfig(
-            base_link="base_link",
-            arm_joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            
-            gripper_joint_name="robotiq_hande_left_finger_joint",
-            gripper_action_type=GripperActionType.ACTION,
-            gripper_type=GripperType.PARALLEL_GRIPPER,
-            gripper_open_position=0.0249,
-            gripper_close_position=0.0001,
-            max_linear_velocity=0.05,
-            max_angular_velocity=0.25,
-        )
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: _real_cameras(crop_top=True))
 
 
 @RobotConfig.register_subclass("ur_10e_real_no_joints")
 @dataclass
-class UR10eRealConfig(ROS2Config):
-    action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    
-    
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-             "camera1": ROS2CameraConfig(
-                 topic='/top_camera/rgb/image_raw/compressed',
-                 node_name="top_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=720,
-                 height=1280,
-                 rotation=Cv2Rotation.ROTATE_270
-             ),
+class UR10eRealNoJointsConfig(UR10eRealConfig):
+    """Only the end effector pose is observed."""
 
-             "camera2": ROS2CameraConfig(
-                 topic='/side_camera/rgb/image_raw/compressed',
-                 node_name="side_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=1280,
-                 height=720,
-            ),
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_QUAT_OBS))
 
-            "camera3": ROS2CameraConfig(
-                topic='/wrist_camera/image_raw/compressed',
-                node_name="wrist_cam",
-                camera_type="compressed_camera",
-                color_mode=ColorMode.RGB,
-                fps=30,
-                width=1280,
-                height=720,
-                 crop_box=[560, 1280, 0, 720] # This crops the output to 720 x 720
-            ),
-        })
-
-    observation_names: list[str] = field(
-        default_factory=lambda: [
-        "pose.x",
-        "pose.y",
-        "pose.z",
-        "pose.quat_x",
-        "pose.quat_y",
-        "pose.quat_z",
-        "pose.quat_w",
-        ]
-    )
-
-    ros2_interface: ROS2InterfaceConfig = field(
-        default_factory=lambda: ROS2InterfaceConfig(
-            base_link="base_link",
-            arm_joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            
-
-            gripper_joint_name="robotiq_hande_left_finger_joint",
-            gripper_action_type=GripperActionType.ACTION,
-            gripper_type=GripperType.PARALLEL_GRIPPER,
-            gripper_open_position=0.0249,
-            gripper_close_position=0.0001,
-            max_linear_velocity=0.05,
-            max_angular_velocity=0.25,
-        )
-    )
 
 @RobotConfig.register_subclass("ur_10e_real_no_joints_cropped")
 @dataclass
-class UR10eRealConfig(ROS2Config):
-    action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    
-    
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-             "camera1": ROS2CameraConfig(
-                 topic='/top_camera/rgb/image_raw/compressed',
-                 node_name="top_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=720,
-                 height=720,
-                 rotation=Cv2Rotation.ROTATE_270,
-                 crop_box=[560, 1280, 0, 720] # This crops the output to 720 x 720
-             ),
+class UR10eRealNoJointsCroppedConfig(UR10eRealConfig):
+    """Only the end effector pose is observed, top camera cropped to a square."""
 
-             "camera2": ROS2CameraConfig(
-                 topic='/side_camera/rgb/image_raw/compressed',
-                 node_name="side_cam",
-                 camera_type="compressed_camera",
-                 color_mode=ColorMode.RGB,
-                 fps=30,
-                 width=1280,
-                 height=720,
-            ),
-
-            "camera3": ROS2CameraConfig(
-                topic='/wrist_camera/image_raw/compressed',
-                node_name="wrist_cam",
-                camera_type="compressed_camera",
-                color_mode=ColorMode.RGB,
-                fps=30,
-                width=1280,
-                height=720,
-            ),
-        })
-
-    observation_names: list[str] = field(
-        default_factory=lambda: [
-        "pose.x",
-        "pose.y",
-        "pose.z",
-        "pose.quat_x",
-        "pose.quat_y",
-        "pose.quat_z",
-        "pose.quat_w",
-        ]
-    )
-
-    ros2_interface: ROS2InterfaceConfig = field(
-        default_factory=lambda: ROS2InterfaceConfig(
-            base_link="base_link",
-            arm_joint_names=[
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            
-
-            gripper_joint_name="robotiq_hande_left_finger_joint",
-            gripper_action_type=GripperActionType.ACTION,
-            gripper_type=GripperType.PARALLEL_GRIPPER,
-            gripper_open_position=0.0249,
-            gripper_close_position=0.0001,
-            max_linear_velocity=0.05,
-            max_angular_velocity=0.25,
-        )
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: _real_cameras(crop_top=True))
+    observation_names: list[str] = field(default_factory=lambda: list(_POSE_QUAT_OBS))

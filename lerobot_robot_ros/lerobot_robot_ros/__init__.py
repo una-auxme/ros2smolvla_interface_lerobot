@@ -12,5 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config import ROS2Config, UR10eRealConfig, UR10eSimConfig
-from .robot import UR10eReal, UR10eSim, ROS2Robot
+from .config import (
+    ROS2Config,
+    UR10eRealConfig,
+    UR10eRealCropConfig,
+    UR10eRealNoJointsConfig,
+    UR10eRealNoJointsCroppedConfig,
+    UR10eSimConfig,
+)
+from .robot import ROS2Robot, UR10eReal, UR10eRealCrop, UR10eRealNoJoints, UR10eRealNoJointsCropped, UR10eSim
