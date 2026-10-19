@@ -36,9 +36,14 @@ from scipy.spatial.transform import Rotation as R
 
 from .config import ActionType, GripperActionType, GripperType, ROS2InterfaceConfig
 from .moveit_servo import MoveIt2Servo
-from .safety import limit_position, limit_rotation, rotation_from_6d
+from .safety import limit_position, limit_rotation, rotation_from_6d, rotation_from_quat
 
 logger = logging.getLogger(__name__)
+
+# Cartesian pose with the orientation as the first two rotation-matrix columns (see `use_6d_rotation`)
+POSE_6D_KEYS = ["pose.x", "pose.y", "pose.z", "pose.r11", "pose.r21", "pose.r31", "pose.r12", "pose.r22", "pose.r32"]
+# Cartesian pose with the orientation as an (x, y, z, w) quaternion
+POSE_QUAT_KEYS = ["pose.x", "pose.y", "pose.z", "pose.quat_x", "pose.quat_y", "pose.quat_z", "pose.quat_w"]
 
 
 class ROS2Interface:
@@ -279,27 +284,33 @@ class ROS2Interface:
             self.twist_pub.publish(twist_msg)
             return
 
-    def send_cartesian_position_command(self, pose) -> bool:
-        """Send an absolute pose (xyz + first two rotation-matrix columns) to the motion controller.
+    def send_cartesian_position_command(self, pose) -> np.ndarray | None:
+        """Send an absolute pose to the motion controller.
 
-        The pose is expressed in `base_link`. It is limited by `workspace_min` / `workspace_max`,
-        `max_cartesian_step` and `max_rotation_step`, if configured.
+        The pose is xyz + first two rotation-matrix columns (9-D) with `use_6d_rotation`, otherwise
+        xyz + an (x, y, z, w) quaternion (7-D), the same format as the observed pose. It is expressed in
+        `base_link` and limited by `workspace_min` / `workspace_max`, `max_cartesian_step` and
+        `max_rotation_step`, if configured.
 
-        Returns False (and sends nothing) if the pose is invalid, or if a step limit is configured but
-        the current pose is unknown or stale.
+        Returns the pose actually sent, in the same format. Returns None (and sends nothing) if the
+        pose is invalid, or if a step limit is configured but the current pose is unknown or stale.
         """
         if not self.robot_node or self.pose_cmd_pub is None:
             raise DeviceNotConnectedError("Pose command publisher is not initialized. You need to call `connect()`.")
 
         pose = np.asarray(pose, dtype=float)
-        if pose.shape != (9,) or not np.all(np.isfinite(pose)):
+        size = 9 if self.config.use_6d_rotation else 7
+        if pose.shape != (size,) or not np.all(np.isfinite(pose)):
             logger.error(f"Dropping invalid pose command: {pose}")
-            return False
-        rot_matrix = rotation_from_6d(pose[3:6], pose[6:9])
-        if rot_matrix is None:
-            logger.error(f"Dropping pose command with degenerate rotation columns: {pose[3:]}")
-            return False
-        target_rot = R.from_matrix(rot_matrix)
+            return None
+        if self.config.use_6d_rotation:
+            rot_matrix = rotation_from_6d(pose[3:6], pose[6:9])
+            target_rot = None if rot_matrix is None else R.from_matrix(rot_matrix)
+        else:
+            target_rot = rotation_from_quat(pose[3:7])
+        if target_rot is None:
+            logger.error(f"Dropping pose command with degenerate rotation: {pose[3:]}")
+            return None
 
         current_position = current_rot = None
         if self.config.max_cartesian_step is not None or self.config.max_rotation_step is not None:
@@ -309,7 +320,7 @@ class ROS2Interface:
                     "Dropping pose command: current pose is %s, cannot apply step limit",
                     "unknown" if age is None else f"stale ({age:.2f} s old)",
                 )
-                return False
+                return None
             current_position, current_rot = self._current_pose
 
         position = limit_position(
@@ -335,7 +346,13 @@ class ROS2Interface:
         pose_msg.pose.orientation.w = float(quat_xyzw[3])
 
         self.pose_cmd_pub.publish(pose_msg)
-        return True
+        if self.config.use_6d_rotation:
+            sent_rot = target_rot.as_matrix()
+            return np.concatenate([position, sent_rot[:, 0], sent_rot[:, 1]])
+        # q and -q are the same rotation: report the sign closest to the command, so recorded actions stay continuous
+        if np.dot(quat_xyzw, pose[3:7]) < 0:
+            quat_xyzw = -quat_xyzw
+        return np.concatenate([position, quat_xyzw])
 
     def send_gripper_command(self, position: float, unnormalize: bool = False) -> bool:
         """

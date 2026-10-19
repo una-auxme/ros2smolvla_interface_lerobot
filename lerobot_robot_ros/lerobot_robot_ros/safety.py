@@ -40,6 +40,14 @@ def rotation_from_6d(col1, col2) -> np.ndarray | None:
     return np.column_stack((c1, c2, np.cross(c1, c2)))
 
 
+def rotation_from_quat(quat_xyzw) -> R | None:
+    """Build a rotation from an (x, y, z, w) quaternion, normalizing it. Returns None if it is ~zero."""
+    quat = np.asarray(quat_xyzw, dtype=float)
+    if np.linalg.norm(quat) < _EPS:
+        return None
+    return R.from_quat(quat)
+
+
 def limit_position(
     target,
     current=None,

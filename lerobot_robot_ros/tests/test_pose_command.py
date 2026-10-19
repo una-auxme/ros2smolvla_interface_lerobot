@@ -39,11 +39,11 @@ class StubPublisher:
         self.msgs.append(msg)
 
 
-def make_interface(**overrides):
+def make_interface(use_6d_rotation=True, **overrides):
     config = ROS2InterfaceConfig(
         arm_joint_names=list(ARM_JOINTS),
         gripper_action_type=GripperActionType.NONE,
-        use_6d_rotation=True,
+        use_6d_rotation=use_6d_rotation,
         **overrides,
     )
     iface = ROS2Interface(config, ActionType.CARTESIAN_POSITION)
@@ -75,7 +75,7 @@ def test_unlimited_pose_is_sent_as_is():
     iface = make_interface()
     rot = R.from_euler("xyz", [0.1, 0.2, 0.3])
     m = rot.as_matrix()
-    assert iface.send_cartesian_position_command([0.4, -0.1, 0.5, *m[:, 0], *m[:, 1]])
+    assert iface.send_cartesian_position_command([0.4, -0.1, 0.5, *m[:, 0], *m[:, 1]]) is not None
     msg = iface.pose_cmd_pub.msgs[-1]
     assert msg.header.frame_id == "base_link"
     np.testing.assert_allclose(sent_position(iface), [0.4, -0.1, 0.5])
@@ -88,14 +88,14 @@ def test_unlimited_pose_is_sent_as_is():
 )
 def test_invalid_pose_dropped(pose):
     iface = make_interface()
-    assert not iface.send_cartesian_position_command(pose)
+    assert iface.send_cartesian_position_command(pose) is None
     assert iface.pose_cmd_pub.msgs == []
 
 
 def test_workspace_and_step_limits():
     iface = make_interface(workspace_min=(-1.0, -1.0, 0.25), workspace_max=(1.0, 1.0, 1.0), max_cartesian_step=0.02)
     iface._cart_pose_callback(pose_msg(xyz=(0.0, 0.0, 0.3)))
-    assert iface.send_cartesian_position_command([0.0, 0.0, 0.0, *IDENTITY_6D])
+    assert iface.send_cartesian_position_command([0.0, 0.0, 0.0, *IDENTITY_6D]) is not None
     np.testing.assert_allclose(sent_position(iface), [0.0, 0.0, 0.28])
 
 
@@ -103,7 +103,7 @@ def test_rotation_step_limit():
     iface = make_interface(max_rotation_step=0.1)
     iface._cart_pose_callback(pose_msg())
     m = R.from_euler("z", np.pi / 2).as_matrix()
-    assert iface.send_cartesian_position_command([0.0, 0.0, 0.3, *m[:, 0], *m[:, 1]])
+    assert iface.send_cartesian_position_command([0.0, 0.0, 0.3, *m[:, 0], *m[:, 1]]) is not None
     np.testing.assert_allclose(sent_rotation(iface).as_rotvec(), [0.0, 0.0, 0.1], atol=1e-9)
 
 
@@ -113,7 +113,7 @@ def test_step_limit_needs_fresh_pose(pose_age):
     if pose_age is not None:
         iface._cart_pose_callback(pose_msg())
         iface._state_stamps["cart_pose"] = time.monotonic() - pose_age
-    assert not iface.send_cartesian_position_command([0.0, 0.0, 0.3, *IDENTITY_6D])
+    assert iface.send_cartesian_position_command([0.0, 0.0, 0.3, *IDENTITY_6D]) is None
     assert iface.pose_cmd_pub.msgs == []
 
 
@@ -149,3 +149,39 @@ def test_frame_mismatch_warns_once(monkeypatch):
         iface._cart_pose_callback(pose_msg(frame_id="world"))
     assert len(messages) == 1
     assert "'world'" in messages[0]
+
+
+def test_returns_pose_actually_sent():
+    iface = make_interface(max_cartesian_step=0.02, max_rotation_step=0.1)
+    iface._cart_pose_callback(pose_msg(xyz=(0.0, 0.0, 0.3)))
+    m = R.from_euler("z", np.pi / 2).as_matrix()
+    sent = iface.send_cartesian_position_command([0.0, 0.0, 0.0, *m[:, 0], *m[:, 1]])
+    np.testing.assert_allclose(sent[:3], sent_position(iface))
+    expected = sent_rotation(iface).as_matrix()
+    np.testing.assert_allclose(sent[3:], [*expected[:, 0], *expected[:, 1]], atol=1e-12)
+
+
+def test_quaternion_pose_is_sent_normalized():
+    iface = make_interface(use_6d_rotation=False)
+    rot = R.from_euler("xyz", [0.1, 0.2, 0.3])
+    sent = iface.send_cartesian_position_command([0.4, -0.1, 0.5, *(2.0 * rot.as_quat())])
+    np.testing.assert_allclose(sent_position(iface), [0.4, -0.1, 0.5])
+    assert sent_rotation(iface).approx_equal(rot)
+    np.testing.assert_allclose(sent, [0.4, -0.1, 0.5, *rot.as_quat()], atol=1e-12)
+
+
+@pytest.mark.parametrize("pose", [[0.0] * 7, [0.0, 0.0, 0.3, *IDENTITY_6D], [0.0, 0.0, 0.3, float("nan"), 0, 0, 1]])
+def test_invalid_quaternion_pose_dropped(pose):
+    iface = make_interface(use_6d_rotation=False)
+    assert iface.send_cartesian_position_command(pose) is None
+    assert iface.pose_cmd_pub.msgs == []
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_quaternion_sign_follows_command(sign):
+    iface = make_interface(use_6d_rotation=False, max_rotation_step=0.1)
+    iface._cart_pose_callback(pose_msg())
+    quat = sign * R.from_euler("z", np.pi / 2).as_quat()
+    sent = iface.send_cartesian_position_command([0.0, 0.0, 0.3, *quat])
+    assert np.dot(sent[3:], quat) > 0
+    assert sent_rotation(iface).approx_equal(R.from_quat(sent[3:]))

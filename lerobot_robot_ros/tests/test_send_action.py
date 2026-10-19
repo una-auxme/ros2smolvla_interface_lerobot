@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import pytest
-from conftest import joint_action, velocity_action
+from conftest import POSE_KEYS, POSE_QUAT_KEYS, joint_action, pose_action, pose_quat_action, velocity_action
 
 from lerobot_robot_ros.config import ActionType
 
@@ -128,3 +129,30 @@ def test_non_finite_joint_action_is_dropped(make_robot):
     robot.send_action(action)
     assert robot.ros2_interface.joint_calls == []
     assert robot.ros2_interface.gripper_calls == []
+
+
+
+def test_cartesian_position_action(make_robot):
+    robot = make_robot(action_type=ActionType.CARTESIAN_POSITION, ros2_interface={"use_6d_rotation": True})
+    assert list(robot.action_features) == POSE_KEYS + ["gripper.pos"]
+    robot.ros2_interface.pose_result = lambda pose: np.asarray(pose) * [0.5, 1, 1, 1, 1, 1, 1, 1, 1]
+    sent = robot.send_action(pose_action(gripper=1.0))
+    assert robot.ros2_interface.pose_calls == [[0.4, 0.0, 0.3, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]]
+    assert sent["pose.x"] == pytest.approx(0.2)  # reports the limited pose
+    assert robot.ros2_interface.gripper_calls == [1.0]
+
+
+def test_cartesian_position_dropped_pose_reported_unchanged(make_robot):
+    robot = make_robot(action_type=ActionType.CARTESIAN_POSITION, ros2_interface={"use_6d_rotation": True})
+    robot.ros2_interface.pose_result = lambda pose: None
+    assert robot.send_action(pose_action())["pose.x"] == 0.4
+
+
+def test_cartesian_position_quaternion_action(make_robot):
+    robot = make_robot(action_type=ActionType.CARTESIAN_POSITION)
+    assert list(robot.action_features) == POSE_QUAT_KEYS + ["gripper.pos"]
+    robot.ros2_interface.pose_result = lambda pose: np.asarray(pose) * [0.5, 1, 1, 1, 1, 1, 1]
+    sent = robot.send_action(pose_quat_action(gripper=1.0))
+    assert robot.ros2_interface.pose_calls == [[0.4, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]]
+    assert sent["pose.x"] == pytest.approx(0.2)  # reports the limited pose
+    assert robot.ros2_interface.gripper_calls == [1.0]

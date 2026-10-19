@@ -17,7 +17,7 @@ import pytest
 from scipy.spatial.transform import Rotation as R
 
 from lerobot_robot_ros.config import ROS2InterfaceConfig
-from lerobot_robot_ros.safety import limit_position, limit_rotation, rotation_from_6d
+from lerobot_robot_ros.safety import limit_position, limit_rotation, rotation_from_6d, rotation_from_quat
 
 
 def test_rotation_from_6d_roundtrip():
@@ -33,6 +33,12 @@ def test_rotation_from_6d_orthonormalizes():
 @pytest.mark.parametrize(("col1", "col2"), [([0, 0, 0], [0, 1, 0]), ([1, 0, 0], [-2, 0, 0])])
 def test_rotation_from_6d_degenerate(col1, col2):
     assert rotation_from_6d(col1, col2) is None
+
+
+def test_rotation_from_quat_normalizes():
+    rot = R.from_euler("xyz", [0.3, -1.2, 2.0])
+    assert rotation_from_quat(3.0 * rot.as_quat()).approx_equal(rot)
+    assert rotation_from_quat([0.0, 0.0, 0.0, 0.0]) is None
 
 
 def test_limit_position_box_then_step():

@@ -25,7 +25,7 @@ from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from .config import ActionType, GripperActionType, ROS2Config
-from .ros_interface import ROS2Interface
+from .ros_interface import POSE_6D_KEYS, POSE_QUAT_KEYS, ROS2Interface
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,11 @@ class ROS2Robot(Robot):
     def _has_gripper(self) -> bool:
         return self.config.ros2_interface.gripper_action_type is not GripperActionType.NONE
 
+    @property
+    def _pose_keys(self) -> list[str]:
+        """Keys of a Cartesian pose action, the same as the observed pose."""
+        return POSE_6D_KEYS if self.config.ros2_interface.use_6d_rotation else POSE_QUAT_KEYS
+
     @cached_property
     def action_features(self) -> dict[str, type]:
         if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
@@ -75,6 +80,9 @@ class ROS2Robot(Robot):
             }
         elif self.config.action_type in (ActionType.JOINT_POSITION, ActionType.JOINT_TRAJECTORY):
             arm_ft = {f"{joint}.pos": float for joint in self.config.ros2_interface.arm_joint_names}
+        elif self.config.action_type is ActionType.CARTESIAN_POSITION:
+            # Same keys as the observed pose, so an observation can be replayed as an action
+            arm_ft = dict.fromkeys(self._pose_keys, float)
         else:
             raise ValueError(f"Unsupported action type: {self.config.action_type}")
         return arm_ft | ({GRIPPER_ACTION_KEY: float} if self._has_gripper else {})
@@ -206,6 +214,11 @@ class ROS2Robot(Robot):
 
             joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
             self.ros2_interface.send_joint_position_command(joint_positions)
+        elif self.config.action_type is ActionType.CARTESIAN_POSITION:
+            sent = self.ros2_interface.send_cartesian_position_command([action[key] for key in self._pose_keys])
+            if sent is not None:
+                # Report the pose after workspace / step limits
+                action.update(zip(self._pose_keys, sent.tolist(), strict=True))
 
         if self._has_gripper and GRIPPER_ACTION_KEY in action:
             if action[GRIPPER_ACTION_KEY] > GRIPPER_CLOSE_THRESHOLD:

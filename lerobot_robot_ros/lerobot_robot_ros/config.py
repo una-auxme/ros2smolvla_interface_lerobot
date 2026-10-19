@@ -83,7 +83,8 @@ class ROS2InterfaceConfig:
     max_state_age_s: float = 0.5
 
     # Observe the end effector orientation as the first two rotation-matrix columns ("pose.r11" ...
-    # "pose.r32") instead of a quaternion ("pose.quat_x" ... "pose.quat_w").
+    # "pose.r32") instead of a quaternion ("pose.quat_x" ... "pose.quat_w"). ActionType.CARTESIAN_POSITION
+    # actions use the same representation.
     use_6d_rotation: bool = False
 
     # Only applicable for ActionType.CARTESIAN_POSITION. Maximum distance (m) a commanded target
