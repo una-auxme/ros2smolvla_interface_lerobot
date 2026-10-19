@@ -105,38 +105,41 @@ class ROS2Robot(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict: dict[str, Any] = {}
-        joint_state = self.ros2_interface.joint_state
-        if joint_state is None:
-            raise RuntimeError("No joint state / Cartesian pose received yet. Is the controller running?")
-
-        # Only twist control subscribes to the Cartesian pose, so it may be absent
-        for kind in ("position", "cart_pose"):
-            obs_dict.update({
-                name: value
-                for name, value in joint_state.get(kind, {}).items()
-                if name in self.config.observation_names
-            })
-            age = self.ros2_interface.state_age(kind)
-            if age is not None and age > self.config.ros2_interface.max_state_age_s:
-                self._warn_throttled(f"stale_{kind}", f"Observed {kind} is {age:.2f} s old, the robot state may be stale.")
-
+        state = self._read_state()
+        obs_dict: dict[str, Any] = {name: state[name] for name in self.config.observation_names if name in state}
         missing = [name for name in self.config.observation_names if name not in obs_dict]
         if missing:
             self._warn_throttled("missing_obs", f"Observation is missing {missing}. Are they published?")
 
-        # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            try:
-                obs_dict[cam_key] = cam.async_read(timeout_ms=300)
-            except Exception as e:
-                logger.error(f"Failed to read camera {cam_key}: {e}")
-                obs_dict[cam_key] = None
+            obs_dict[cam_key] = self._read_camera(cam_key, cam)
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
+
+    def _read_state(self) -> dict[str, float]:
+        """All robot state values currently available, e.g. "shoulder_pan_joint.pos" or "pose.x"."""
+        joint_state = self.ros2_interface.joint_state
+        if joint_state is None:
+            raise RuntimeError("No joint state / Cartesian pose received yet. Is the controller running?")
+
+        state: dict[str, float] = {}
+        # Only Cartesian control subscribes to the Cartesian pose, so it may be absent
+        for kind in ("position", "cart_pose"):
+            state.update(joint_state.get(kind, {}))
+            age = self.ros2_interface.state_age(kind)
+            if age is not None and age > self.config.ros2_interface.max_state_age_s:
+                self._warn_throttled(f"stale_{kind}", f"Observed {kind} is {age:.2f} s old, the robot state may be stale.")
+        return state
+
+    def _read_camera(self, cam_key: str, cam) -> Any:
+        try:
+            return cam.async_read(timeout_ms=300)
+        except Exception as e:
+            logger.error(f"Failed to read camera {cam_key}: {e}")
+            return None
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
