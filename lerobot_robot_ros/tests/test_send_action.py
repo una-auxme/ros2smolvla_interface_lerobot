@@ -92,3 +92,18 @@ def test_action_without_gripper_key(make_robot):
     del action["gripper.pos"]
     robot.send_action(action)
     assert robot.ros2_interface.gripper_calls == []
+
+
+def test_no_gripper(make_robot):
+    from lerobot_robot_ros.config import GripperActionType
+
+    robot = make_robot(ros2_interface={"gripper_action_type": GripperActionType.NONE})
+    assert "gripper.pos" not in robot.action_features
+    robot.send_action(velocity_action(gripper=1.0))
+    assert robot.ros2_interface.gripper_calls == []
+
+
+def test_action_features_include_gripper_by_default(make_robot):
+    assert list(make_robot().action_features)[-1] == "gripper.pos"
+    joint_robot = make_robot(action_type=ActionType.JOINT_POSITION)
+    assert list(joint_robot.action_features) == [f"joint_{i}.pos" for i in range(1, 7)] + ["gripper.pos"]

@@ -23,7 +23,7 @@ from lerobot.robots import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from .config import ActionType, ROS2Config
+from .config import ActionType, GripperActionType, ROS2Config
 from .ros_interface import ROS2Interface
 
 logger = logging.getLogger(__name__)
@@ -56,24 +56,26 @@ class ROS2Robot(Robot):
         state_ft = {obs: float for obs in self.config.observation_names}        
         return {**state_ft, **self._cameras_ft}
 
+    @property
+    def _has_gripper(self) -> bool:
+        return self.config.ros2_interface.gripper_action_type is not GripperActionType.NONE
+
     @cached_property
     def action_features(self) -> dict[str, type]:
         if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
-            return {
+            arm_ft = {
                 "linear_x.vel": float,
                 "linear_y.vel": float,
                 "linear_z.vel": float,
                 "angular_x.vel": float,
                 "angular_y.vel": float,
                 "angular_z.vel": float,
-                "gripper.pos": float,
             }
         elif self.config.action_type in (ActionType.JOINT_POSITION, ActionType.JOINT_TRAJECTORY):
-            return {f"{joint}.pos": float for joint in self.config.ros2_interface.arm_joint_names} | {
-                "gripper.pos": float
-            }
+            arm_ft = {f"{joint}.pos": float for joint in self.config.ros2_interface.arm_joint_names}
         else:
             raise ValueError(f"Unsupported action type: {self.config.action_type}")
+        return arm_ft | ({GRIPPER_ACTION_KEY: float} if self._has_gripper else {})
 
     @property
     def is_connected(self) -> bool:
@@ -185,7 +187,7 @@ class ROS2Robot(Robot):
             joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
             self.ros2_interface.send_joint_position_command(joint_positions)
 
-        if self.config.ros2_interface.gripper_joint_name and GRIPPER_ACTION_KEY in action:
+        if self._has_gripper and GRIPPER_ACTION_KEY in action:
             if action[GRIPPER_ACTION_KEY] > GRIPPER_CLOSE_THRESHOLD:
                 gripper_pos = self.config.ros2_interface.gripper_close_position
             else:

@@ -32,6 +32,7 @@ class ActionType(Enum):
 class GripperActionType(Enum):
     TRAJECTORY = "trajectory"  # Use JointTrajectoryController for gripper
     ACTION = "action"  # Use GripperActionClient
+    NONE = "none"
 
 class GripperType(Enum):
     PARALLEL_GRIPPER = "parallel_gripper"

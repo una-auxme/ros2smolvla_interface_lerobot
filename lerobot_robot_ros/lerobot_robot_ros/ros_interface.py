@@ -113,7 +113,7 @@ class ROS2Interface:
             self.gripper_traj_pub = self.robot_node.create_publisher(
                 JointTrajectory, "/gripper_controller/joint_trajectory", 10
             )
-        else:
+        elif self.config.gripper_action_type == GripperActionType.ACTION:
             if self.config.gripper_type == GripperType.GRIPPER:
                 self.gripper_action_client = ActionClient(
                     self.robot_node,
@@ -133,6 +133,8 @@ class ROS2Interface:
                 self._goal_msg = ParallelGripperCommand.Goal()
             else:
                 self.robot_node.get_logger().warn("No GripperType defined, how did this happen?")
+        else:
+            pass
 
         self.joint_state_sub = self.robot_node.create_subscription(
             JointState,
@@ -288,14 +290,14 @@ class ROS2Interface:
             positions[(joint_name + ".pos")] = msg.position[idx]
             velocities[(joint_name + ".pos")] = msg.velocity[idx]
 
-
-        idx = name_to_index.get(self.config.gripper_joint_name)
-        if idx is None:
-            raise ValueError(
-                f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
-            )
-        positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
-        velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
+        if self.config.gripper_action_type is not GripperActionType.NONE:
+            idx = name_to_index.get(self.config.gripper_joint_name)
+            if idx is None:
+                raise ValueError(
+                    f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
+                )
+            positions[f"{self.config.gripper_joint_name}.pos"] = msg.position[idx]
+            velocities[f"{self.config.gripper_joint_name}.pos"] = msg.velocity[idx]
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities
