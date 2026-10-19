@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from functools import cached_property
 from typing import Any
@@ -140,6 +141,8 @@ class ROS2Robot(Robot):
         Args:
             action (dict[str, float]): The goal positions for the motors or pressed_keys dict.
 
+        Actions containing NaN or infinite values are dropped entirely and nothing is sent.
+
         Raises:
             DeviceNotConnectedError: if robot is not connected.
 
@@ -148,6 +151,13 @@ class ROS2Robot(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Drop the whole action, gripper included: a NaN gripper command would fail the close
+        # threshold comparison and open the gripper.
+        non_finite = [key for key, value in action.items() if not math.isfinite(float(value))]
+        if non_finite:
+            logger.error(f"Dropping action with non-finite values for {non_finite}: {action}")
+            return action
 
         action = dict(action)
         if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):

@@ -107,3 +107,24 @@ def test_action_features_include_gripper_by_default(make_robot):
     assert list(make_robot().action_features)[-1] == "gripper.pos"
     joint_robot = make_robot(action_type=ActionType.JOINT_POSITION)
     assert list(joint_robot.action_features) == [f"joint_{i}.pos" for i in range(1, 7)] + ["gripper.pos"]
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("key", ["linear_x.vel", "gripper.pos"])
+def test_non_finite_velocity_action_is_dropped(make_robot, bad, key):
+    robot = make_robot()
+    robot.send_action(velocity_action(gripper=1.0))  # gripper closed
+    action = velocity_action(0.5, gripper=1.0)
+    action[key] = bad
+    robot.send_action(action)
+    assert len(robot.ros2_interface.servo_calls) == 1
+    assert robot.ros2_interface.gripper_calls == [1.0]  # stayed closed
+
+
+def test_non_finite_joint_action_is_dropped(make_robot):
+    robot = make_robot(action_type=ActionType.JOINT_POSITION)
+    action = joint_action(0.5)
+    action["joint_4.pos"] = float("nan")
+    robot.send_action(action)
+    assert robot.ros2_interface.joint_calls == []
+    assert robot.ros2_interface.gripper_calls == []
