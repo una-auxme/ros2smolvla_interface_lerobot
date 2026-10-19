@@ -72,6 +72,8 @@ class ROS2Interface:
         self.executor_thread: threading.Thread | None = None
         self._connected = False
         self._last_joint_state: dict[str, dict[str, float]] | None = None
+        # time.monotonic() of the last update per state kind ("position", "cart_pose")
+        self._state_stamps: dict[str, float] = {}
 
     @property
     def is_connected(self) -> bool:
@@ -340,6 +342,12 @@ class ROS2Interface:
         state["position"] = positions
         state["velocity"] = velocities
         self._last_joint_state = state
+        self._state_stamps["position"] = time.monotonic()
+
+    def state_age(self, kind: str) -> float | None:
+        """Seconds since `kind` ("position" or "cart_pose") was last updated, None if never received."""
+        stamp = self._state_stamps.get(kind)
+        return None if stamp is None else time.monotonic() - stamp
 
     def _cart_pose_callback(self, msg: "PoseStamped") -> None:
         """
@@ -363,6 +371,7 @@ class ROS2Interface:
             "pose.quat_z": orientation.z,
             "pose.quat_w": orientation.w
         }
+        self._state_stamps["cart_pose"] = time.monotonic()
 
     def disconnect(self):
         # Stop spinning before destroying anything the executor might still be using

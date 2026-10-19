@@ -44,6 +44,7 @@ class ROS2Robot(Robot):
         self.ros2_interface = ROS2Interface(config.ros2_interface, config.action_type)
         self.cameras = make_cameras_from_configs(config.cameras)
         self.last_gripper_action = None
+        self._last_warning_time: dict[str, float] = {}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -106,17 +107,23 @@ class ROS2Robot(Robot):
 
         obs_dict: dict[str, Any] = {}
         joint_state = self.ros2_interface.joint_state
-        obs_dict.update({
-            joint : pos 
-            for joint, pos in joint_state["position"].items() 
-            if joint in self.config.observation_names
-        })
+        if joint_state is None:
+            raise RuntimeError("No joint state / Cartesian pose received yet. Is the controller running?")
 
-        obs_dict.update({
-            joint : pos 
-            for joint, pos in joint_state["cart_pose"].items() 
-            if joint in self.config.observation_names
-        })
+        # Only twist control subscribes to the Cartesian pose, so it may be absent
+        for kind in ("position", "cart_pose"):
+            obs_dict.update({
+                name: value
+                for name, value in joint_state.get(kind, {}).items()
+                if name in self.config.observation_names
+            })
+            age = self.ros2_interface.state_age(kind)
+            if age is not None and age > self.config.ros2_interface.max_state_age_s:
+                self._warn_throttled(f"stale_{kind}", f"Observed {kind} is {age:.2f} s old, the robot state may be stale.")
+
+        missing = [name for name in self.config.observation_names if name not in obs_dict]
+        if missing:
+            self._warn_throttled("missing_obs", f"Observation is missing {missing}. Are they published?")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -207,6 +214,12 @@ class ROS2Robot(Robot):
             if gripper_pos != self.last_gripper_action and self.ros2_interface.send_gripper_command(gripper_pos):
                 self.last_gripper_action = gripper_pos
         return action
+
+    def _warn_throttled(self, key: str, message: str, period_s: float = 5.0) -> None:
+        now = time.monotonic()
+        if now - self._last_warning_time.get(key, -period_s) >= period_s:
+            self._last_warning_time[key] = now
+            logger.warning(message)
 
     def _clip_relative(self, goal_present: dict[str, tuple[float, float]]) -> dict[str, float]:
         """Clip goals to within `max_relative_target` of their present value."""

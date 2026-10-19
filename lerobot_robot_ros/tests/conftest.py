@@ -36,6 +36,9 @@ class FakeInterface:
         self.joint_calls = []
         self.gripper_calls = []
 
+    def state_age(self, kind):
+        return 0.0 if kind in (self.joint_state or {}) else None
+
     def servo(self, linear, angular):
         self.servo_calls.append((tuple(linear), tuple(angular)))
 

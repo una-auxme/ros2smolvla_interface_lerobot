@@ -80,3 +80,11 @@ def test_not_connected_when_spin_thread_died():
     iface.executor_thread.join()
     iface.is_connected = True
     assert not iface.is_connected
+
+
+def test_state_age():
+    iface = make_interface()
+    assert iface.state_age("position") is None
+    iface._joint_state_callback(joint_msg(ARM_JOINTS, [0.1] * 6))
+    assert 0.0 <= iface.state_age("position") < 0.5
+    assert iface.state_age("cart_pose") is None

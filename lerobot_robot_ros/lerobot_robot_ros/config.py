@@ -78,6 +78,9 @@ class ROS2InterfaceConfig:
     # Seconds connect() waits for the first complete robot state and for the gripper action server
     connect_timeout_s: float = 15.0
 
+    # Robot state (joint states, Cartesian pose) older than this many seconds is reported as stale
+    max_state_age_s: float = 0.5
+
 
 @dataclass
 class ROS2Config(RobotConfig):
