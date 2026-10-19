@@ -81,9 +81,11 @@ class ROS2Config(RobotConfig):
     action_type: ActionType = ActionType.JOINT_POSITION
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-    # the number of motors in your follower arms.
-    max_relative_target: int | None = None
+    # Set this to a positive scalar to have the same value for all motors, or a dict mapping each action key
+    # (e.g. "shoulder_pan_joint.pos") to its own limit. For cartesian velocity actions it caps each normalized
+    # velocity component instead.
+    # Subclasses must override this with a type annotation, otherwise the dataclass silently keeps `None`.
+    max_relative_target: float | dict[str, float] | None = None
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -106,7 +108,6 @@ class ROS2Config(RobotConfig):
 @dataclass
 class UR10eSimConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    max_relative_target = 0.2
     
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
@@ -188,7 +189,6 @@ class UR10eSimConfig(ROS2Config):
 @dataclass
 class UR10eRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    max_relative_target = 0.2
     
     
     cameras: dict[str, CameraConfig] = field(
@@ -270,7 +270,6 @@ class UR10eRealConfig(ROS2Config):
 @dataclass
 class UR10eRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    max_relative_target = 0.2
     
     
     cameras: dict[str, CameraConfig] = field(
@@ -354,7 +353,6 @@ class UR10eRealConfig(ROS2Config):
 @dataclass
 class UR10eRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    max_relative_target = 0.2
     
     
     cameras: dict[str, CameraConfig] = field(
@@ -431,7 +429,6 @@ class UR10eRealConfig(ROS2Config):
 @dataclass
 class UR10eRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_VELOCITY_TWIST_MSG
-    max_relative_target = 0.2
     
     
     cameras: dict[str, CameraConfig] = field(
