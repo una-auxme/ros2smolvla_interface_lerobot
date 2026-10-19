@@ -75,6 +75,9 @@ class ROS2InterfaceConfig:
     gripper_action_type: GripperActionType = GripperActionType.TRAJECTORY
     gripper_type: GripperType = GripperType.GRIPPER
 
+    # Seconds connect() waits for the first complete robot state and for the gripper action server
+    connect_timeout_s: float = 15.0
+
 
 @dataclass
 class ROS2Config(RobotConfig):

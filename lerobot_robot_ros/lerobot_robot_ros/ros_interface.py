@@ -139,7 +139,8 @@ class ROS2Interface:
                     "/gripper_action_controller/gripper_cmd",
                     callback_group=ReentrantCallbackGroup(),
                 )
-                self.gripper_action_client.wait_for_server()    
+                if not self.gripper_action_client.wait_for_server(timeout_sec=self.config.connect_timeout_s):
+                    logger.warning("Gripper action server not available yet, gripper commands will be retried.")
                 self._goal_msg = ParallelGripperCommand.Goal()
             else:
                 self.robot_node.get_logger().warn("No GripperType defined, how did this happen?")
@@ -158,7 +159,25 @@ class ROS2Interface:
         self.executor.add_node(self.robot_node)
         self.executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.executor_thread.start()
-        time.sleep(3)  # Give some time to connect to services and receive messages
+        time.sleep(1)  # Give some time to connect to services
+
+        # Block until the first joint state (and Cartesian pose, if used) arrived, so that the very
+        # first get_observation() right after connect() does not fail.
+        needs_pose = self.cart_pose_sub is not None
+        deadline = time.monotonic() + self.config.connect_timeout_s
+        while time.monotonic() < deadline:
+            state = self._last_joint_state or {}
+            if self.has_full_joint_state() and (not needs_pose or "cart_pose" in state):
+                break
+            time.sleep(0.1)
+        else:
+            logger.warning(
+                "No complete joint state%s received within %.0f s. Is the robot / controller running? "
+                "Joints expected on /joint_states: %s",
+                " / Cartesian pose" if needs_pose else "",
+                self.config.connect_timeout_s,
+                self.tracked_joint_names,
+            )
 
         self.is_connected = True
 
@@ -346,9 +365,22 @@ class ROS2Interface:
         }
 
     def disconnect(self):
+        # Stop spinning before destroying anything the executor might still be using
+        if self.executor:
+            self.executor.shutdown(timeout_sec=5.0)
+            self.executor = None
+        if self.executor_thread:
+            self.executor_thread.join(timeout=5.0)
+            if self.executor_thread.is_alive():
+                logger.warning("ROS 2 executor thread did not stop within 5 s.")
+            self.executor_thread = None
+
         if self.joint_state_sub:
             self.joint_state_sub.destroy()
             self.joint_state_sub = None
+        if self.cart_pose_sub:
+            self.cart_pose_sub.destroy()
+            self.cart_pose_sub = None
         if self.pos_cmd_pub:
             self.pos_cmd_pub.destroy()
             self.pos_cmd_pub = None
@@ -369,12 +401,5 @@ class ROS2Interface:
             self.robot_node = None
         if self.moveit2_servo:
             self.moveit2_servo = None
-
-        if self.executor:
-            self.executor.shutdown()
-            self.executor = None
-        if self.executor_thread:
-            self.executor_thread.join()
-            self.executor_thread = None
 
         self.is_connected = False
