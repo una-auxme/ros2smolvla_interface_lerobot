@@ -9,6 +9,8 @@ The fork adds the possibility to simply send ROS2 TwistStamped messages to a ros
 
 
 A gamepad teleoperator for 6-DoF end-effector control and a keyboard teleoperator for joint position control is also provided.
+For absolute end-effector pose control (`cartesian_position`), use `--teleop.type=gamepad_6dof_pose` with
+`--teleop.use_6d_rotation` set like the robot's `ros2_interface.use_6d_rotation`.
 
 **Supported control modes:**
 

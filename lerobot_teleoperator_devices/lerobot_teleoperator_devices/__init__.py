@@ -1,4 +1,6 @@
 from .config_gamepad_6dof import Gamepad6DOFTeleopConfig
+from .config_gamepad_6dof_pose import Gamepad6DOFPoseTeleopConfig
 from .config_keyboard_joint import KeyboardJointTeleopConfig
 from .gamepad_6dof import Gamepad6DOFTeleop
+from .gamepad_6dof_pose import Gamepad6DOFPoseTeleop
 from .keyboard_joint import KeyboardJointTeleop
