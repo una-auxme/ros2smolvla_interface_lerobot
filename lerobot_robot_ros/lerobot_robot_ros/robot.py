@@ -259,58 +259,71 @@ class ROS2Robot(Robot):
         logger.info(f"{self} disconnected.")
 
 
-# NORA policy feature names
-_NORA_OBS_POSE_KEYS = [f"current_robot_pose.{n}.pos" for n in range(9)]
-_NORA_TARGET_POSE_KEYS = [f"target_robot_pose.{n}.pos" for n in range(9)]
-_NORA_VEL_KEYS = [f"delta_robot_pose.{n}.vel" for n in range(6)]
+# CartesianRobot velocity feature names
+_CARTESIAN_VEL_KEYS = [f"delta_robot_pose.{n}.vel" for n in range(6)]
 _ROS2_VEL_KEYS = ["linear_x.vel", "linear_y.vel", "linear_z.vel", "angular_x.vel", "angular_y.vel", "angular_z.vel"]
 
 
-def rotate_pose9_z(pose, yaw_deg: float, inverse: bool = False) -> np.ndarray:
-    """Rotate a 9-D pose (xyz + first two rotation-matrix columns) about the z axis.
+def rotate_pose_z(pose, yaw_deg: float, inverse: bool = False) -> np.ndarray:
+    """Rotate a pose about the z axis: 9-D (xyz + first two rotation-matrix columns) or 7-D (xyz + an
+    (x, y, z, w) quaternion).
 
-    Applies p' = Rz(yaw) p to the position and to both rotation columns, i.e. R' = Rz(yaw) R.
-    With `inverse=True` the opposite rotation is applied.
+    Applies p' = Rz(yaw) p to the position and R' = Rz(yaw) R to the orientation. With `inverse=True`
+    the opposite rotation is applied. A quaternion is not normalized, so invalid ones stay invalid.
     """
     pose = np.asarray(pose, dtype=float)
-    if pose.shape != (9,):
-        raise ValueError(f"Expected a 9-D pose, got shape {pose.shape}")
+    if pose.shape not in ((7,), (9,)):
+        raise ValueError(f"Expected a 7-D or 9-D pose, got shape {pose.shape}")
     if yaw_deg == 0.0:
         return pose.copy()
     yaw = np.deg2rad(-yaw_deg if inverse else yaw_deg)
     c, s = np.cos(yaw), np.sin(yaw)
     rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-    return np.concatenate([rz @ pose[0:3], rz @ pose[3:6], rz @ pose[6:9]])
+    if pose.shape == (9,):
+        return np.concatenate([rz @ pose[0:3], rz @ pose[3:6], rz @ pose[6:9]])
+    # Hamilton product q_z * q with q_z = (0, 0, sin(yaw / 2), cos(yaw / 2))
+    x, y, z, w = pose[3:7]
+    hc, hs = np.cos(yaw / 2), np.sin(yaw / 2)
+    quat = [hc * x - hs * y, hc * y + hs * x, hc * z + hs * w, hc * w - hs * z]
+    return np.concatenate([rz @ pose[0:3], quat])
 
 
 class CartesianRobot(ROS2Robot):
-    """ROS2Robot using the NORA policy's feature names, in the frame its training data was generated in.
+    """ROS2Robot with index-based Cartesian feature names, expressed in a configurable data frame.
 
-    Observations: current_robot_pose.{0-8}.pos (xyz + first two rotation-matrix columns) and
-    current_joint_positions.{i}. Actions: target_robot_pose.{0-8}.pos (CARTESIAN_POSITION),
-    delta_robot_pose.{0-5}.vel (velocity control) or target_joint_positions.{i}.pos (joint control).
+    Observations: current_robot_pose.{n}.pos and current_joint_positions.{i}. Actions:
+    target_robot_pose.{n}.pos (CARTESIAN_POSITION), delta_robot_pose.{0-5}.vel (velocity control) or
+    target_joint_positions.{i}.pos (joint control). The pose is xyz + first two rotation-matrix columns
+    (n = 0-8) with `use_6d_rotation`, otherwise xyz + an (x, y, z, w) quaternion (n = 0-6).
 
-    The pose is rotated by `data_frame_yaw_deg` about z between `base_link` and the policy's frame.
-    All limits and checks of ROS2Robot / ROS2Interface apply.
+    The pose is rotated by `data_frame_yaw_deg` about z between `base_link` and the data frame, e.g.
+    the frame a dataset was recorded or generated in. All limits and checks of ROS2Robot / ROS2Interface
+    apply.
     """
 
     @property
     def _yaw_deg(self) -> float:
         return self.config.ros2_interface.data_frame_yaw_deg
 
+    @property
+    def _obs_pose_keys(self) -> list[str]:
+        return [f"current_robot_pose.{n}.pos" for n in range(len(self._pose_keys))]
+
+    @property
+    def _target_pose_keys(self) -> list[str]:
+        return [f"target_robot_pose.{n}.pos" for n in range(len(self._pose_keys))]
+
     def _action_key_map(self) -> dict[str, str]:
-        """NORA action key -> ROS2Robot action key."""
+        """CartesianRobot action key -> ROS2Robot action key."""
         if self.config.action_type in (ActionType.CARTESIAN_VELOCITY, ActionType.CARTESIAN_VELOCITY_TWIST_MSG):
-            return dict(zip(_NORA_VEL_KEYS, _ROS2_VEL_KEYS, strict=True))
+            return dict(zip(_CARTESIAN_VEL_KEYS, _ROS2_VEL_KEYS, strict=True))
         if self.config.action_type in (ActionType.JOINT_POSITION, ActionType.JOINT_TRAJECTORY):
             return {
                 f"target_joint_positions.{i}.pos": f"{joint}.pos"
                 for i, joint in enumerate(self.config.ros2_interface.arm_joint_names)
             }
         if self.config.action_type is ActionType.CARTESIAN_POSITION:
-            if not self.config.ros2_interface.use_6d_rotation:
-                raise ValueError("ActionType.CARTESIAN_POSITION requires ros2_interface.use_6d_rotation=True")
-            return dict(zip(_NORA_TARGET_POSE_KEYS, POSE_6D_KEYS, strict=True))
+            return dict(zip(self._target_pose_keys, self._pose_keys, strict=True))
         raise ValueError(f"Unsupported action type: {self.config.action_type}")
 
     @cached_property
@@ -319,23 +332,26 @@ class CartesianRobot(ROS2Robot):
 
     def _read_state(self) -> dict[str, float]:
         state = super()._read_state()
-        nora_state = {
+        cartesian_state = {
             f"current_joint_positions.{i}": state[f"{joint}.pos"]
             for i, joint in enumerate(self.config.ros2_interface.arm_joint_names)
             if f"{joint}.pos" in state
         }
-        nora_state.update({nora: state[key] for nora, key in zip(_NORA_OBS_POSE_KEYS, POSE_6D_KEYS) if key in state})
+        obs_pose_keys = self._obs_pose_keys
+        cartesian_state.update(
+            {name: state[key] for name, key in zip(obs_pose_keys, self._pose_keys, strict=True) if key in state}
+        )
 
-        # Express the pose in the frame the policy's data was generated in
+        # Express the pose in the data frame
         if self._yaw_deg != 0.0:
-            if all(key in nora_state for key in _NORA_OBS_POSE_KEYS):
-                rotated = rotate_pose9_z([nora_state[key] for key in _NORA_OBS_POSE_KEYS], self._yaw_deg)
-                nora_state.update(zip(_NORA_OBS_POSE_KEYS, rotated.tolist(), strict=True))
+            if all(key in cartesian_state for key in obs_pose_keys):
+                rotated = rotate_pose_z([cartesian_state[key] for key in obs_pose_keys], self._yaw_deg)
+                cartesian_state.update(zip(obs_pose_keys, rotated.tolist(), strict=True))
             else:
                 self._warn_throttled(
-                    "nora_yaw", "data_frame_yaw_deg is set but the full 9-D pose is not observed; not rotating"
+                    "data_frame_yaw", "data_frame_yaw_deg is set but the full pose is not observed; not rotating"
                 )
-        return nora_state
+        return cartesian_state
 
     def _read_camera(self, cam_key: str, cam) -> Any:
         try:
@@ -345,24 +361,25 @@ class CartesianRobot(ROS2Robot):
             return cam.read_latest(max_age_ms=1000)
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
-        """Translate a NORA action, send it with ROS2Robot.send_action and return what was sent (NORA names)."""
+        """Translate an action to ROS2Robot's keys, send it with ROS2Robot.send_action and return what was
+        sent, in this robot's keys and data frame."""
         key_map = self._action_key_map()
         is_pose = self.config.action_type is ActionType.CARTESIAN_POSITION
         source_keys = list(key_map)
-        if is_pose and _NORA_TARGET_POSE_KEYS[0] not in action:
+        if is_pose and source_keys[0] not in action:
             # `lerobot-rollout` returns the robot to its initial position by replaying the
             # observation keys (`current_robot_pose.N.pos`), so accept those as a pose target too.
-            source_keys = _NORA_OBS_POSE_KEYS
+            source_keys = self._obs_pose_keys
 
         values = [action[key] for key in source_keys]
         if is_pose:
-            # Policy frame -> robot frame
-            values = rotate_pose9_z(values, self._yaw_deg, inverse=True).tolist()
+            # Data frame -> robot frame
+            values = rotate_pose_z(values, self._yaw_deg, inverse=True).tolist()
         sent = super().send_action(dict(zip(key_map.values(), values, strict=True)))
 
         sent_values = [sent[key] for key in key_map.values()]
         if is_pose:
-            sent_values = rotate_pose9_z(sent_values, self._yaw_deg).tolist()
+            sent_values = rotate_pose_z(sent_values, self._yaw_deg).tolist()
         return dict(zip(key_map, sent_values, strict=True))
 
 

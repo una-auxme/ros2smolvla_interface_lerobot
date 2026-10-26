@@ -87,10 +87,10 @@ class ROS2InterfaceConfig:
     # actions use the same representation.
     use_6d_rotation: bool = False
 
-    # Only applicable for ActionType.CARTESIAN_POSITION with `use_6d_rotation`.
-    # Rotation about the z axis (degrees) that maps the robot's `base_link` frame into the frame the
-    # policy's data was generated in: observations are rotated by +yaw before they reach the policy,
-    # actions by -yaw before they are sent to the robot.
+    # Only used by CartesianRobot (the cartesian_robot_* configs), with either rotation representation.
+    # Rotation about the z axis (degrees) that maps the robot's `base_link` frame into the data frame,
+    # e.g. the frame a dataset was recorded or generated in: observations are rotated by +yaw before
+    # they reach the policy, actions by -yaw before they are sent to the robot.
     data_frame_yaw_deg: float = 0.0
 
     # Only applicable for ActionType.CARTESIAN_POSITION. Maximum distance (m) a commanded target
@@ -420,7 +420,7 @@ _POSE_OBS_NAMES = [f"current_robot_pose.{n}.pos" for n in range(9)]
 @RobotConfig.register_subclass("cartesian_robot_sim_no_middle")
 @dataclass
 class CartesianRobotSimNoMiddleConfig(ROS2Config):
-    """Sim, without the middle_left camera. Images are 640x360 (W x H), unrotated, like the SDG training data."""
+    """Sim, without the middle_left camera. Images are 640x360 (W x H), unrotated, like the synthetic training data."""
 
     action_type: ActionType = ActionType.CARTESIAN_POSITION
     cameras: dict[str, CameraConfig] = field(
