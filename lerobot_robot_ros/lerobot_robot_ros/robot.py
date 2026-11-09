@@ -20,6 +20,7 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.robots import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
@@ -27,6 +28,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 from .config import ActionType, GripperActionType, ROS2Config
 from .ros_interface import POSE_6D_KEYS, POSE_QUAT_KEYS, ROS2Interface
+from .safety import rotation_from_6d, rotation_from_quat
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,8 @@ class ROS2Robot(Robot):
 
     def __init__(self, config: ROS2Config):
         super().__init__(config)
+        if (config.zero_state or config.offset_actions) and not isinstance(self, CartesianRobot):
+            raise ValueError("zero_state and offset_actions are only supported by CartesianRobot (cartesian_robot_*)")
         self.config = config
         self.ros2_interface = ROS2Interface(config.ros2_interface, config.action_type)
         self.cameras = make_cameras_from_configs(config.cameras)
@@ -262,6 +266,9 @@ class ROS2Robot(Robot):
 # CartesianRobot velocity feature names
 _CARTESIAN_VEL_KEYS = [f"delta_robot_pose.{n}.vel" for n in range(6)]
 _ROS2_VEL_KEYS = ["linear_x.vel", "linear_y.vel", "linear_z.vel", "angular_x.vel", "angular_y.vel", "angular_z.vel"]
+# CartesianRobot offset actions (`offset_actions`): dx, dy, dz, then the rotation vector. lerobot-rollout only maps
+# policy outputs onto action features ending in .pos or .vel
+OFFSET_ACTION_KEYS = [f"offset_robot_pose.{n}.pos" for n in range(6)]
 
 
 def rotate_pose_z(pose, yaw_deg: float, inverse: bool = False) -> np.ndarray:
@@ -288,6 +295,43 @@ def rotate_pose_z(pose, yaw_deg: float, inverse: bool = False) -> np.ndarray:
     return np.concatenate([rz @ pose[0:3], quat])
 
 
+def _pose_rotation(pose: np.ndarray) -> R | None:
+    """Orientation of a 9-D or 7-D pose (see rotate_pose_z), None if it is degenerate."""
+    if pose.shape == (9,):
+        matrix = rotation_from_6d(pose[3:6], pose[6:9])
+        return None if matrix is None else R.from_matrix(matrix)
+    return rotation_from_quat(pose[3:7])
+
+
+def apply_pose_offset(pose, offset) -> np.ndarray | None:
+    """The 9-D or 7-D pose moved by a 6-D offset (position difference + rotation vector, in the pose's frame):
+    p' = p + dp, R' = R_offset * R. None if the pose's rotation is degenerate.
+
+    The inverse of pose_offset, and the convention of the nora_pipeline_runner's offset_actions.py.
+    """
+    pose, offset = np.asarray(pose, dtype=float), np.asarray(offset, dtype=float)
+    rotation = _pose_rotation(pose)
+    if rotation is None:
+        return None
+    rotation = R.from_rotvec(offset[3:6]) * rotation
+    if pose.shape == (9,):
+        matrix = rotation.as_matrix()
+        return np.concatenate([pose[:3] + offset[:3], matrix[:, 0], matrix[:, 1]])
+    quat = rotation.as_quat()
+    # q and -q are the same rotation: keep the sign closest to the pose's, so poses stay continuous
+    return np.concatenate([pose[:3] + offset[:3], -quat if np.dot(quat, pose[3:7]) < 0 else quat])
+
+
+def pose_offset(pose, target) -> np.ndarray | None:
+    """The 6-D offset that moves a 9-D or 7-D pose to the target pose (see apply_pose_offset). None if either
+    rotation is degenerate."""
+    pose, target = np.asarray(pose, dtype=float), np.asarray(target, dtype=float)
+    rotation, target_rotation = _pose_rotation(pose), _pose_rotation(target)
+    if rotation is None or target_rotation is None:
+        return None
+    return np.concatenate([target[:3] - pose[:3], (target_rotation * rotation.inv()).as_rotvec()])
+
+
 class CartesianRobot(ROS2Robot):
     """ROS2Robot with index-based Cartesian feature names, expressed in a configurable data frame.
 
@@ -299,7 +343,16 @@ class CartesianRobot(ROS2Robot):
     The pose is rotated by `data_frame_yaw_deg` about z between `base_link` and the data frame, e.g.
     the frame a dataset was recorded or generated in. All limits and checks of ROS2Robot / ROS2Interface
     apply.
+
+    With `zero_state` every observed state value is reported as 0. With `offset_actions` (CARTESIAN_POSITION
+    only) the actions are offset_robot_pose.{0-5}.pos: position difference and rotation vector from the pose
+    measured when the action is sent, in the data frame (see apply_pose_offset).
     """
+
+    def __init__(self, config):
+        super().__init__(config)
+        if config.offset_actions and config.action_type is not ActionType.CARTESIAN_POSITION:
+            raise ValueError(f"offset_actions needs action_type cartesian_position, not {config.action_type.value}")
 
     @property
     def _yaw_deg(self) -> float:
@@ -328,7 +381,22 @@ class CartesianRobot(ROS2Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        if self.config.offset_actions:
+            return dict.fromkeys(OFFSET_ACTION_KEYS, float)
         return dict.fromkeys(self._action_key_map(), float)
+
+    def get_observation(self) -> dict[str, Any]:
+        obs = super().get_observation()
+        if self.config.zero_state:
+            obs.update(dict.fromkeys(self.config.observation_names, 0.0))
+        return obs
+
+    def _measured_pose(self) -> np.ndarray | None:
+        """The current pose in the data frame (not zeroed by `zero_state`), None if it is not observed."""
+        state = self._read_state()
+        if not all(key in state for key in self._obs_pose_keys):
+            return None
+        return np.array([state[key] for key in self._obs_pose_keys])
 
     def _read_state(self) -> dict[str, float]:
         state = super()._read_state()
@@ -363,12 +431,18 @@ class CartesianRobot(ROS2Robot):
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Translate an action to ROS2Robot's keys, send it with ROS2Robot.send_action and return what was
         sent, in this robot's keys and data frame."""
+        if self.config.offset_actions and OFFSET_ACTION_KEYS[0] in action:
+            return self._send_offset_action(action)
+
         key_map = self._action_key_map()
         is_pose = self.config.action_type is ActionType.CARTESIAN_POSITION
         source_keys = list(key_map)
         if is_pose and source_keys[0] not in action:
             # `lerobot-rollout` returns the robot to its initial position by replaying the
             # observation keys (`current_robot_pose.N.pos`), so accept those as a pose target too.
+            if self.config.zero_state:
+                # ... but then they are zeros, not a pose. Raising makes lerobot-rollout skip the return.
+                raise ValueError("Not sending observed poses as a target: zero_state reports them as 0")
             source_keys = self._obs_pose_keys
 
         values = [action[key] for key in source_keys]
@@ -381,6 +455,23 @@ class CartesianRobot(ROS2Robot):
         if is_pose:
             sent_values = rotate_pose_z(sent_values, self._yaw_deg).tolist()
         return dict(zip(key_map, sent_values, strict=True))
+
+    def _send_offset_action(self, action: dict[str, float]) -> dict[str, float]:
+        """Send the measured pose moved by the action's offset, as an absolute pose with all its limits. Returns
+        the offset actually applied, or the action unchanged if nothing was sent."""
+        offset = np.array([action[key] for key in OFFSET_ACTION_KEYS], dtype=float)
+        if not np.all(np.isfinite(offset)):
+            logger.error(f"Dropping offset action with non-finite values: {offset}")
+            return dict(action)
+        # Like in training, the offset refers to the pose measured right when it is executed
+        measured = self._measured_pose()
+        target = None if measured is None else apply_pose_offset(measured, offset)
+        if target is None:
+            self._warn_throttled("offset_pose", "Dropping offset action: the measured pose is missing or invalid")
+            return dict(action)
+        sent = self.send_action(dict(zip(self._target_pose_keys, target.tolist(), strict=True)))
+        applied = pose_offset(measured, [sent[key] for key in self._target_pose_keys])
+        return dict(zip(OFFSET_ACTION_KEYS, (offset if applied is None else applied).tolist(), strict=True))
 
 
 class SO101ROS(ROS2Robot):

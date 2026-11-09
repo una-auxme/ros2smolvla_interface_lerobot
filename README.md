@@ -89,6 +89,25 @@ This option uses a ROS topic to publish TwistStamped messages under ```/servo_no
 
 This option is enabled by setting `action_type` to `ActionType.CARTESIAN_VELOCITY_TWIST_MSG` in robot config.
 
+#### Zero-state and offset-action policies (`cartesian_robot_*`)
+
+Two options of the `cartesian_robot_*` configs match policies trained on datasets converted by the pipeline runner
+(`offset_actions.py`, `remove_feature.py --zero`). Both are on by default, as all Cartesian models are trained this
+way; pass `=false` for a model with measured states or absolute pose actions:
+
+- `--robot.zero_state=true` reports every state observation as 0. Use it for policies trained with
+  `observation.state` zero in every frame: their normalizer has a std of 0, so a measured state would be scaled into
+  values the policy never saw. The cameras are unaffected.
+- `--robot.offset_actions=true` (with `cartesian_position`) takes 6-value actions `offset_robot_pose.{0-5}.pos`: the
+  position difference (m) and rotation vector (rad, `R_target = R_offset * R_measured`) from the pose measured when the
+  action is sent, in the data frame. The resulting target passes the same workspace and step limits as an absolute
+  pose, and the offset actually applied is returned (and recorded).
+
+With `zero_state`, `lerobot-rollout` can't return the arm to its
+initial position (the observed pose is zeros), so it skips that with a warning; pass
+`--return_to_initial_position=false` (and, with the episodic strategy, `--strategy.reset_to_initial_position=false`)
+to silence it.
+
 ### Gripper Control Modes
 
 The repo supports three gripper control modes that can be configured via the `gripper_action_type` setting:

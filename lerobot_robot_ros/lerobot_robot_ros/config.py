@@ -143,6 +143,18 @@ class ROS2Config(RobotConfig):
         ]
     )
 
+    # Only used by CartesianRobot (the cartesian_robot_* configs). Report every `observation_names` value as 0,
+    # for policies trained with observation.state zero in every frame (the runner's remove_feature.py --zero /
+    # offset_actions.py). Their normalizer has std 0, so a measured state would be blown up by its epsilon. The
+    # cameras are unaffected and the robot still uses the measured pose internally, e.g. for `offset_actions`.
+    zero_state: bool = False
+
+    # Only used by CartesianRobot with ActionType.CARTESIAN_POSITION. Actions are 6-D offsets from the pose measured
+    # when the action is sent, in the data frame (offset_robot_pose.{0-5}.pos): the position difference (m) and the
+    # rotation vector (rad) of R_offset, with R_target = R_offset * R_measured. The target is limited like an absolute
+    # pose, and the offset actually applied is returned.
+    offset_actions: bool = False
+
     # ROS2 interface configuration
     ros2_interface: ROS2InterfaceConfig = field(default_factory=ROS2InterfaceConfig)
 
@@ -274,6 +286,9 @@ class UR10eRealNoJointsCroppedConfig(UR10eRealConfig):
 @dataclass
 class CartesianRobotRealConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_POSITION
+    # All Cartesian models are trained on zeroed states and offset actions (the runner's offset_actions.py)
+    zero_state: bool = True
+    offset_actions: bool = True
     
     
     cameras: dict[str, CameraConfig] = field(
@@ -346,6 +361,9 @@ class CartesianRobotRealConfig(ROS2Config):
 @dataclass
 class CartesianRobotSimConfig(ROS2Config):
     action_type: ActionType = ActionType.CARTESIAN_POSITION
+    # All Cartesian models are trained on zeroed states and offset actions (the runner's offset_actions.py)
+    zero_state: bool = True
+    offset_actions: bool = True
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "top_center_camera": ROS2CameraConfig(
@@ -423,6 +441,9 @@ class CartesianRobotSimNoMiddleConfig(ROS2Config):
     """Sim, without the middle_left camera. Images are 640x360 (W x H), unrotated, like the synthetic training data."""
 
     action_type: ActionType = ActionType.CARTESIAN_POSITION
+    # All Cartesian models are trained on zeroed states and offset actions (the runner's offset_actions.py)
+    zero_state: bool = True
+    offset_actions: bool = True
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "top_center_camera": ROS2CameraConfig(
@@ -464,6 +485,9 @@ class CartesianRobotRealNoMiddleConfig(ROS2Config):
     """Real robot, without the middle_left camera. 1280x720 feeds are downscaled to 640x360, unrotated and uncropped."""
 
     action_type: ActionType = ActionType.CARTESIAN_POSITION
+    # All Cartesian models are trained on zeroed states and offset actions (the runner's offset_actions.py)
+    zero_state: bool = True
+    offset_actions: bool = True
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "top_center_camera": ROS2CameraConfig(
